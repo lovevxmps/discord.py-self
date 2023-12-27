@@ -1,7 +1,7 @@
 """
 The MIT License (MIT)
 
-Copyright (c) 2015-present Rapptz
+Copyright (c) 2021-present Dolfies
 
 Permission is hereby granted, free of charge, to any person obtaining a
 copy of this software and associated documentation files (the "Software"),
@@ -22,54 +22,26 @@ FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 """
 
-from typing import Optional, TypedDict
+import aiohttp
+import pytest
 
-from .activity import BasePresenceUpdate
-from .snowflake import SnowflakeList
-from .user import PartialUser
-
-
-class Nickname(TypedDict):
-    nick: str
+from discord import utils
 
 
-class PartialMember(TypedDict):
-    roles: SnowflakeList
-    joined_at: str
-    deaf: bool
-    mute: bool
-    flags: int
+@pytest.mark.asyncio
+async def test_build_number():
+    async with aiohttp.ClientSession() as session:
+        assert await utils._get_build_number(session) is not None
 
 
-class Member(PartialMember, total=False):
-    avatar: Optional[str]
-    user: PartialUser
-    nick: str
-    premium_since: Optional[str]
-    pending: bool
-    communication_disabled_until: str
+@pytest.mark.asyncio
+async def test_browser_version():
+    async with aiohttp.ClientSession() as session:
+        assert await utils._get_browser_version(session) is not None
 
 
-class _OptionalMemberWithUser(PartialMember, total=False):
-    avatar: Optional[str]
-    nick: str
-    premium_since: Optional[str]
-    pending: bool
-    communication_disabled_until: str
-
-
-class MemberWithUser(_OptionalMemberWithUser):
-    user: PartialUser
-
-
-class MemberWithPresence(MemberWithUser):
-    presence: BasePresenceUpdate
-
-
-class PrivateMember(MemberWithUser):
-    bio: str
-    banner: Optional[str]
-
-
-class UserWithMember(PartialUser, total=False):
-    member: _OptionalMemberWithUser
+@pytest.mark.asyncio
+async def test_user_agent():
+    async with aiohttp.ClientSession() as session:
+        browser_version = await utils._get_browser_version(session)
+        assert utils._get_user_agent(browser_version) is not None

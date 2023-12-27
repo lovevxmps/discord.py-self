@@ -45,14 +45,6 @@ Client
     .. automethod:: Client.event()
         :decorator:
 
-CaptchaHandler
-~~~~~~~~~~~~~~
-
-.. attributetable:: CaptchaHandler
-
-.. autoclass:: CaptchaHandler
-    :members:
-
 Voice Related
 ---------------
 
@@ -1691,21 +1683,27 @@ of :class:`enum.Enum`.
 
     .. attribute:: news_thread
 
-        A news thread
+        A news thread.
 
         .. versionadded:: 2.0
 
     .. attribute:: public_thread
 
-        A public thread
+        A public thread.
 
         .. versionadded:: 2.0
 
     .. attribute:: private_thread
 
-        A private thread
+        A private thread.
 
         .. versionadded:: 2.0
+
+    .. attribute:: directory
+
+        A directory channel.
+
+        .. versionadded:: 2.1
 
     .. attribute:: forum
 
@@ -3559,7 +3557,7 @@ of :class:`enum.Enum`.
 
     .. attribute:: canceled
 
-        Alias for :attr:`cancelled`.
+        An alias for :attr:`cancelled`.
 
     .. attribute:: deferred
 
@@ -4185,7 +4183,7 @@ of :class:`enum.Enum`.
 
     .. attribute:: canceled
 
-        Alias for :attr:`PaymentStatus.cancelled`.
+        An alias for :attr:`PaymentStatus.cancelled`.
 
 .. class:: EntitlementType
 
@@ -5730,6 +5728,67 @@ of :class:`enum.Enum`.
 
         Represents a guild-bound read state for guild onboarding. Only one exists per guild.
 
+.. class:: DirectoryEntryType
+
+    Represents the type of a directory entry.
+
+    .. versionadded:: 2.1
+
+    .. attribute:: guild
+
+        Represents a guild directory entry.
+
+    .. attribute:: scheduled_event
+
+        Represents a broadcasted scheduled event directory entry.
+
+.. class:: DirectoryCategory
+
+    Represents the category of a directory entry.
+
+    .. versionadded:: 2.1
+
+    .. attribute:: uncategorized
+
+        The directory entry is uncategorized.
+
+    .. attribute:: school_club
+
+        The directory entry is a school club.
+
+    .. attribute:: class_subject
+
+        The directory entry is a class/subject.
+
+    .. attribute:: study_social
+
+        The directory entry is a study/social venue.
+
+    .. attribute:: miscellaneous
+
+        The directory entry is miscellaneous.
+
+.. class:: HubType
+
+    Represents the type of Student Hub a guild is.
+
+    .. versionadded:: 2.1
+
+    .. attribute:: default
+
+        The Student Hub is not categorized as a high school or post-secondary institution.
+
+    .. attribute:: high_school
+
+        The Student Hub is for a high school.
+
+    .. attribute:: college
+
+        The Student Hub is for a post-secondary institution (college or university).
+
+    .. attribute:: university
+
+        An alias for :attr:`college`.
 
 .. _discord-api-audit-logs:
 
@@ -5863,6 +5922,12 @@ AuditLogDiff
         The guild's owner. See also :attr:`Guild.owner`
 
         :type: Union[:class:`Member`, :class:`User`]
+
+    .. attribute:: application_id
+
+        The application ID of the guild owner (if applicable). See also :attr:`Guild.application_id`.
+
+        :type: :class:`int`
 
     .. attribute:: afk_channel
 
@@ -6434,7 +6499,7 @@ AuditLogDiff
 
         :type: :class:`default_reaction_emoji`
 
-.. this is currently missing the following keys: reason and application_id
+.. this is currently missing the following keys: reason
    I'm not sure how to port these
 
 Webhook Support
@@ -7070,7 +7135,6 @@ Metadata
 
 .. autoclass:: Metadata()
     :members:
-    :inherited-members:
 
 ReadState
 ~~~~~~~~~
@@ -7342,6 +7406,12 @@ GuildChannel
 .. attributetable:: StageChannel
 
 .. autoclass:: StageChannel()
+    :members:
+    :inherited-members:
+
+.. attributetable:: DirectoryChannel
+
+.. autoclass:: DirectoryChannel()
     :members:
     :inherited-members:
 
@@ -7832,12 +7902,20 @@ Permissions
 .. autoclass:: PermissionOverwrite()
     :members:
 
+DirectoryEntry
+~~~~~~~~~~~~~~~
+
+.. attributetable:: DirectoryEntry
+
+.. autoclass:: DirectoryEntry()
+    :members:
+
 ForumTag
 ~~~~~~~~~
 
 .. attributetable:: ForumTag
 
-.. autoclass:: ForumTag
+.. autoclass:: ForumTag()
     :members:
 
 Experiment
@@ -8021,8 +8099,12 @@ The following exceptions are thrown by the library.
     :members:
 
 .. autoexception:: Forbidden
+    :members:
+    :inherited-members:
 
 .. autoexception:: NotFound
+    :members:
+    :inherited-members:
 
 .. autoexception:: CaptchaRequired
     :members:
@@ -8035,6 +8117,7 @@ The following exceptions are thrown by the library.
 .. autoexception:: GatewayNotFound
 
 .. autoexception:: ConnectionClosed
+    :members:
 
 .. autoexception:: discord.opus.OpusError
 

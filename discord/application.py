@@ -87,6 +87,7 @@ if TYPE_CHECKING:
         EmbeddedActivityPlatform as EmbeddedActivityPlatformValues,
         EmbeddedActivityPlatformConfig as EmbeddedActivityPlatformConfigPayload,
         GlobalActivityStatistics as GlobalActivityStatisticsPayload,
+        InteractionsVersion,
         Manifest as ManifestPayload,
         ManifestLabel as ManifestLabelPayload,
         PartialApplication as PartialApplicationPayload,
@@ -323,11 +324,11 @@ class Achievement(Hashable):
         -----------
         name: :class:`str`
             The achievement's name.
-        name_localizations: Dict[:class:`Locale`, :class:`str`]
+        name_localizations: Mapping[:class:`Locale`, :class:`str`]
             The achievement's name localized to other languages.
         description: :class:`str`
             The achievement's description.
-        description_localizations: Dict[:class:`Locale`, :class:`str`]
+        description_localizations: Mapping[:class:`Locale`, :class:`str`]
             The achievement's description localized to other languages.
         icon: :class:`bytes`
             A :term:`py:bytes-like object` representing the new icon.
@@ -424,11 +425,33 @@ class ThirdPartySKU:
     def __init__(self, *, data: ThirdPartySKUPayload, application: Union[PartialApplication, IntegrationApplication]):
         self.application = application
         self.distributor: Distributor = try_enum(Distributor, data['distributor'])
-        self.id: Optional[str] = data.get('id')
-        self.sku_id: Optional[str] = data.get('sku_id')
+        self.id: Optional[str] = data.get('id') or None
+        self.sku_id: Optional[str] = data.get('sku_id') or None
 
     def __repr__(self) -> str:
         return f'<ThirdPartySKU distributor={self.distributor!r} id={self.id!r} sku_id={self.sku_id!r}>'
+
+    @property
+    def _id(self) -> str:
+        return self.id or self.sku_id or ''
+
+    @property
+    def url(self) -> Optional[str]:
+        """:class:`str`: Returns the URL of the SKU, if available.
+
+        .. versionadded:: 2.1
+        """
+        if not self._id:
+            return
+
+        if self.distributor == Distributor.discord:
+            return f'https://discord.com/store/skus/{self._id}'
+        elif self.distributor == Distributor.steam:
+            return f'https://store.steampowered.com/app/{self._id}'
+        elif self.distributor == Distributor.epic_games:
+            return f'https://store.epicgames.com/en-US/p/{self.application.name.replace(" ", "-")}'
+        elif self.distributor == Distributor.google_play:
+            return f'https://play.google.com/store/apps/details?id={self._id}'
 
 
 class EmbeddedActivityPlatformConfig:
@@ -684,6 +707,24 @@ class ApplicationBot(User):
     def require_code_grant(self) -> bool:
         """:class:`bool`: Whether the bot requires the completion of the full OAuth2 code grant flow to join."""
         return self.application.require_code_grant
+
+    @property
+    def disabled(self) -> bool:
+        """:class:`bool`: Whether the bot is disabled by Discord.
+
+        .. versionadded:: 2.1
+        """
+        return self.application.disabled
+
+    @property
+    def quarantined(self) -> bool:
+        """:class:`bool`: Whether the bot is quarantined by Discord.
+
+        Quarantined bots cannot join more guilds or start new direct messages.
+
+        .. versionadded:: 2.1
+        """
+        return self.application.quarantined
 
     @property
     def bio(self) -> Optional[str]:
@@ -1152,7 +1193,7 @@ class Manifest(Hashable):
 
         Parameters
         -----------
-        manifest: :class:`Metadata`
+        manifest: Mapping[:class:`str`, Any]
             A dict-like object representing the manifest to upload.
 
         Raises
@@ -1576,7 +1617,7 @@ class ApplicationBranch(Hashable):
 
         Parameters
         -----------
-        manifests: List[:class:`Metadata`]
+        manifests: List[Mapping[:class:`str`, Any]]
             A list of dict-like objects representing the manifests.
         source_build: Optional[:class:`ApplicationBuild`]
             The source build of the build, if any.
@@ -1726,8 +1767,12 @@ class PartialApplication(Hashable):
         The application name.
     description: :class:`str`
         The application description.
-    rpc_origins: List[:class:`str`]
+    rpc_origins: Optional[List[:class:`str`]]
         A list of RPC origin URLs, if RPC is enabled.
+
+        .. versionchanged:: 2.1
+
+            The type of this attribute has changed to Optional[List[:class:`str`]].
     verify_key: :class:`str`
         The hex encoded key for verification in interactions and the
         GameSDK's :ddocs:`GetTicket <game-sdk/applications#getticket`.
@@ -1855,7 +1900,7 @@ class PartialApplication(Hashable):
         self.id: int = int(data['id'])
         self.name: str = data['name']
         self.description: str = data['description']
-        self.rpc_origins: List[str] = data.get('rpc_origins') or []
+        self.rpc_origins: Optional[List[str]] = data.get('rpc_origins')
         self.verify_key: str = data['verify_key']
 
         self.aliases: List[str] = data.get('aliases', [])
@@ -1903,6 +1948,7 @@ class PartialApplication(Hashable):
         self.public: bool = data.get('integration_public', data.get('bot_public', True))
         self.require_code_grant: bool = data.get('integration_require_code_grant', data.get('bot_require_code_grant', False))
         self._has_bot: bool = 'bot_public' in data
+        self._guild: Optional[Guild] = state.create_guild(data['guild']) if 'guild' in data else None
 
         # Hacky, but I want these to be persisted
 
@@ -1912,7 +1958,10 @@ class PartialApplication(Hashable):
 
         existing = getattr(self, 'team', None)
         team = data.get('team')
-        self.team = Team(state=state, data=team) if team else existing
+        if existing and team:
+            existing._update(team)
+        else:
+            self.team = Team(state=state, data=team) if team else existing
 
         if self.team and not self.owner:
             # We can create a team user from the team data
@@ -1926,12 +1975,6 @@ class PartialApplication(Hashable):
                 'avatar': None,
             }
             self.owner = state.create_user(payload)
-
-        self._guild: Optional[Guild] = None
-        if 'guild' in data:
-            from .guild import Guild
-
-            self._guild = Guild(state=state, data=data['guild'])
 
     def __repr__(self) -> str:
         return f'<{self.__class__.__name__} id={self.id} name={self.name!r} description={self.description!r}>'
@@ -2001,6 +2044,13 @@ class PartialApplication(Hashable):
         .. versionadded:: 2.1
         """
         return self._has_bot
+
+    def is_rpc_enabled(self) -> bool:
+        """:class:`bool`: Whether the application has the ability to access the client RPC server.
+
+        .. versionadded:: 2.1
+        """
+        return self.rpc_origins is not None
 
     async def assets(self) -> List[ApplicationAsset]:
         """|coro|
@@ -2237,8 +2287,27 @@ class Application(PartialApplication):
         The application owner. This may be a team user account.
     bot: Optional[:class:`ApplicationBot`]
         The bot attached to the application, if any.
+    disabled: :class:`bool`
+        Whether the bot attached to this application is disabled by Discord.
+
+        .. versionadded:: 2.1
+    quarantined: :class:`bool`
+        Whether the bot attached to this application is quarantined by Discord.
+
+        Quarantined bots cannot join more guilds or start new direct messages.
+
+        .. versionadded:: 2.1
     interactions_endpoint_url: Optional[:class:`str`]
         The URL interactions will be sent to, if set.
+    interactions_version: :class:`int`
+        The interactions version to use. Different versions have different payloads and supported features.
+
+        .. versionadded:: 2.1
+    interactions_event_types: List[:class:`str`]
+        The interaction event types to subscribe to.
+        Requires a valid :attr:`interactions_endpoint_url` and :attr:`interactions_version` 2 or higher.
+
+        .. versionadded:: 2.1
     role_connections_verification_url: Optional[:class:`str`]
         The application's connection verification URL which will render the application as
         a verification method in the guild's role verification configuration.
@@ -2252,8 +2321,8 @@ class Application(PartialApplication):
         The approval state of the RPC usage application.
     discoverability_state: :class:`ApplicationDiscoverabilityState`
         The state of the application in the application directory.
-    approximate_guild_count: Optional[:class:`int`]
-        The approximate number of guilds this application is in, if available.
+    approximate_guild_count: :class:`int`
+        The approximate number of guilds this application is in.
 
         .. versionadded:: 2.1
     """
@@ -2262,8 +2331,12 @@ class Application(PartialApplication):
         'owner',
         'redirect_uris',
         'interactions_endpoint_url',
+        'interactions_version',
+        'interactions_event_types',
         'role_connections_verification_url',
         'bot',
+        'disabled',
+        'quarantined',
         'verification_state',
         'store_application_state',
         'rpc_application_state',
@@ -2282,8 +2355,12 @@ class Application(PartialApplication):
     def _update(self, data: ApplicationPayload) -> None:
         super()._update(data)
 
+        self.disabled: bool = data.get('bot_disabled', False)
+        self.quarantined: bool = data.get('bot_quarantined', False)
         self.redirect_uris: List[str] = data.get('redirect_uris', [])
         self.interactions_endpoint_url: Optional[str] = data.get('interactions_endpoint_url')
+        self.interactions_version: InteractionsVersion = data.get('interactions_version', 1)
+        self.interactions_event_types: List[str] = data.get('interactions_event_types', [])
         self.role_connections_verification_url: Optional[str] = data.get('role_connections_verification_url')
 
         self.verification_state = try_enum(ApplicationVerificationState, data['verification_state'])
@@ -2291,7 +2368,7 @@ class Application(PartialApplication):
         self.rpc_application_state = try_enum(RPCApplicationState, data.get('rpc_application_state', 0))
         self.discoverability_state = try_enum(ApplicationDiscoverabilityState, data.get('discoverability_state', 1))
         self._discovery_eligibility_flags = data.get('discovery_eligibility_flags', 0)
-        self.approximate_guild_count: Optional[int] = data.get('approximate_guild_count')
+        self.approximate_guild_count: int = data.get('approximate_guild_count', 0)
 
         state = self._state
 
@@ -2336,6 +2413,8 @@ class Application(PartialApplication):
         privacy_policy_url: Optional[str] = MISSING,
         deeplink_uri: Optional[str] = MISSING,
         interactions_endpoint_url: Optional[str] = MISSING,
+        interactions_version: InteractionsVersion = MISSING,
+        interactions_event_types: Sequence[str] = MISSING,
         role_connections_verification_url: Optional[str] = MISSING,
         redirect_uris: Sequence[str] = MISSING,
         rpc_origins: Sequence[str] = MISSING,
@@ -2379,6 +2458,15 @@ class Application(PartialApplication):
             .. versionadded:: 2.1
         interactions_endpoint_url: Optional[:class:`str`]
             The URL interactions will be sent to, if set.
+        interactions_version: :class:`int`
+            The interactions version to use. Different versions have different payloads and supported features.
+
+            .. versionadded:: 2.1
+        interactions_event_types: List[:class:`str`]
+            The interaction event types to subscribe to.
+            Requires a valid :attr:`interactions_endpoint_url` and :attr:`interactions_version` 2 or higher.
+
+            .. versionadded:: 2.1
         role_connections_verification_url: Optional[:class:`str`]
             The connection verification URL for the application.
 
@@ -2443,12 +2531,16 @@ class Application(PartialApplication):
             payload['deeplink_uri'] = deeplink_uri or ''
         if interactions_endpoint_url is not MISSING:
             payload['interactions_endpoint_url'] = interactions_endpoint_url or ''
+        if interactions_version is not MISSING:
+            payload['interactions_version'] = interactions_version
+        if interactions_event_types is not MISSING:
+            payload['interactions_event_types'] = interactions_event_types or []
         if role_connections_verification_url is not MISSING:
             payload['role_connections_verification_url'] = role_connections_verification_url or ''
         if redirect_uris is not MISSING:
-            payload['redirect_uris'] = redirect_uris
+            payload['redirect_uris'] = redirect_uris or []
         if rpc_origins is not MISSING:
-            payload['rpc_origins'] = rpc_origins
+            payload['rpc_origins'] = rpc_origins or []
         if public is not MISSING:
             if self.bot:
                 payload['bot_public'] = public
@@ -2484,7 +2576,6 @@ class Application(PartialApplication):
             await self._state.http.transfer_application(self.id, team.id)
 
         data = await self._state.http.edit_application(self.id, payload)
-
         self._update(data)
 
     async def fetch_bot(self) -> ApplicationBot:

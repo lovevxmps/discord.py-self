@@ -30,6 +30,7 @@ import logging
 from typing import (
     Any,
     AsyncIterator,
+    Awaitable,
     Callable,
     Collection,
     Coroutine,
@@ -53,7 +54,7 @@ from .user import _UserTag, User, ClientUser, Note
 from .invite import Invite
 from .template import Template
 from .widget import Widget
-from .guild import Guild, UserGuild
+from .guild import UserGuild
 from .emoji import Emoji
 from .channel import _private_channel_factory, _threaded_channel_factory, GroupChannel, PartialMessageable
 from .enums import ActivityType, ChannelType, ClientType, ConnectionType, EntitlementType, Status
@@ -78,7 +79,6 @@ from .sticker import GuildSticker, StandardSticker, StickerPack, _sticker_factor
 from .profile import UserProfile
 from .connections import Connection
 from .team import Team
-from .handlers import CaptchaHandler
 from .billing import PaymentSource, PremiumUsage
 from .subscriptions import Subscription, SubscriptionItem, SubscriptionInvoice
 from .payments import Payment
@@ -110,6 +110,7 @@ if TYPE_CHECKING:
     from .read_state import ReadState
     from .tutorial import Tutorial
     from .file import File
+    from .guild import Guild
     from .types.snowflake import Snowflake as _Snowflake
 
     PrivateChannel = Union[DMChannel, GroupChannel]
@@ -215,10 +216,14 @@ class Client:
         The default behavior is ``True`` (what the client does).
 
         .. versionadded:: 2.0
-    captcha_handler: Optional[:class:`CaptchaHandler`]
-        A class that solves captcha challenges.
+    captcha_handler: Optional[Callable[[:class:`.CaptchaRequired`, :class:`.Client`], Awaitable[:class:`str`]]
+        A function that solves captcha challenges.
 
         .. versionadded:: 2.0
+
+        .. versionchanged:: 2.1
+
+            Now accepts a coroutine instead of a ``CaptchaHandler``.
     max_ratelimit_timeout: Optional[:class:`float`]
         The maximum number of seconds to wait when a non-global rate limit is encountered.
         If a request requires sleeping for more than the seconds passed in, then
@@ -243,16 +248,15 @@ class Client:
         proxy: Optional[str] = options.pop('proxy', None)
         proxy_auth: Optional[aiohttp.BasicAuth] = options.pop('proxy_auth', None)
         unsync_clock: bool = options.pop('assume_unsync_clock', True)
-        captcha_handler: Optional[CaptchaHandler] = options.pop('captcha_handler', None)
-        if captcha_handler is not None and not isinstance(captcha_handler, CaptchaHandler):
-            raise TypeError(f'captcha_handler must derive from CaptchaHandler')
         max_ratelimit_timeout: Optional[float] = options.pop('max_ratelimit_timeout', None)
+        self.captcha_handler: Optional[Callable[[CaptchaRequired, Client], Awaitable[str]]] = options.pop(
+            'captcha_handler', None
+        )
         self.http: HTTPClient = HTTPClient(
-            self.loop,
             proxy=proxy,
             proxy_auth=proxy_auth,
             unsync_clock=unsync_clock,
-            captcha_handler=captcha_handler,
+            captcha=self.handle_captcha,
             max_ratelimit_timeout=max_ratelimit_timeout,
             locale=lambda: self._connection.locale,
         )
@@ -540,6 +544,8 @@ class Client:
     def get_experiment(self, experiment: Union[str, int], /) -> Optional[Union[UserExperiment, GuildExperiment]]:
         """Returns a user or guild experiment from the given experiment identifier.
 
+        .. versionadded:: 2.1
+
         Parameters
         -----------
         experiment: Union[:class:`str`, :class:`int`]
@@ -659,7 +665,7 @@ class Client:
         """
         _log.exception('Ignoring exception in %s', event_method)
 
-    async def on_internal_settings_update(self, old_settings: UserSettings, new_settings: UserSettings):
+    async def on_internal_settings_update(self, old_settings: UserSettings, new_settings: UserSettings, /):
         if not self._sync_presences:
             return
 
@@ -703,11 +709,40 @@ class Client:
         """
         pass
 
+    async def handle_captcha(self, exception: CaptchaRequired, /) -> str:
+        """|coro|
+
+        Handles a CAPTCHA challenge and returns a solution.
+
+        The default implementation tries to use the CAPTCHA handler
+        passed in the constructor.
+
+        .. versionadded:: 2.1
+
+        Parameters
+        ------------
+        exception: :class:`.CaptchaRequired`
+            The exception that was raised.
+
+        Raises
+        --------
+        CaptchaRequired
+            The CAPTCHA challenge could not be solved.
+
+        Returns
+        --------
+        :class:`str`
+            The solution to the CAPTCHA challenge.
+        """
+        handler = self.captcha_handler
+        if handler is None:
+            raise exception
+        return await handler(exception, self)
+
     async def _async_setup_hook(self) -> None:
         # Called whenever the client needs to initialise asyncio objects with a running loop
         loop = asyncio.get_running_loop()
         self.loop = loop
-        self.http.loop = loop
         self._connection.loop = loop
         await self._connection.async_setup()
 
@@ -1783,8 +1818,9 @@ class Client:
         :class:`.Guild`
             The guild from the ID.
         """
-        data = await self.http.get_guild(guild_id, with_counts)
-        guild = Guild(data=data, state=self._connection)
+        state = self._connection
+        data = await state.http.get_guild(guild_id, with_counts)
+        guild = state.create_guild(data)
         guild._cs_joined = True
         return guild
 
@@ -1807,8 +1843,9 @@ class Client:
         :class:`.Guild`
             The guild from the ID.
         """
-        data = await self.http.get_guild_preview(guild_id)
-        return Guild(data=data, state=self._connection)
+        state = self._connection
+        data = await state.http.get_guild_preview(guild_id)
+        return state.create_guild(data)
 
     async def create_guild(
         self,
@@ -1852,17 +1889,18 @@ class Client:
             The guild created. This is not the same guild that is
             added to cache.
         """
+        state = self._connection
         if icon is not MISSING:
             icon_base64 = utils._bytes_to_base64_data(icon)
         else:
             icon_base64 = None
 
         if code:
-            data = await self.http.create_from_template(code, name, icon_base64)
+            data = await state.http.create_from_template(code, name, icon_base64)
         else:
-            data = await self.http.create_guild(name, icon_base64)
+            data = await state.http.create_guild(name, icon_base64)
 
-        guild = Guild(data=data, state=self._connection)
+        guild = state.create_guild(data)
         guild._cs_joined = True
         return guild
 
@@ -1892,7 +1930,7 @@ class Client:
         """
         state = self._connection
         data = await state.http.join_guild(guild_id, lurking, state.session_id)
-        guild = Guild(data=data, state=state)
+        guild = state.create_guild(data)
         guild._cs_joined = not lurking
         return guild
 
@@ -1983,7 +2021,6 @@ class Client:
         /,
         *,
         with_counts: bool = True,
-        with_expiration: bool = True,
         scheduled_event_id: Optional[int] = None,
     ) -> Invite:
         """|coro|
@@ -2000,6 +2037,10 @@ class Client:
 
             ``url`` parameter is now positional-only.
 
+        .. versionchanged:: 2.1
+
+            The ``with_expiration`` parameter has been removed.
+
         Parameters
         -----------
         url: Union[:class:`.Invite`, :class:`str`]
@@ -2008,11 +2049,6 @@ class Client:
             Whether to include count information in the invite. This fills the
             :attr:`.Invite.approximate_member_count` and :attr:`.Invite.approximate_presence_count`
             fields.
-        with_expiration: :class:`bool`
-            Whether to include the expiration date of the invite. This fills the
-            :attr:`.Invite.expires_at` field.
-
-            .. versionadded:: 2.0
         scheduled_event_id: Optional[:class:`int`]
             The ID of the scheduled event this invite is for.
 
@@ -2048,7 +2084,6 @@ class Client:
         data = await self.http.get_invite(
             resolved.code,
             with_counts=with_counts,
-            with_expiration=with_expiration,
             guild_scheduled_event_id=scheduled_event_id,
         )
         return Invite.from_incomplete(state=self._connection, data=data)
@@ -2082,7 +2117,6 @@ class Client:
         data = await state.http.get_invite(
             resolved.code,
             with_counts=True,
-            with_expiration=True,
             input_value=resolved.code if isinstance(url, Invite) else url,
         )
         if isinstance(url, Invite):
@@ -3621,7 +3655,7 @@ class Client:
             Whether the previewed subscription should be a renewal.
         code: Optional[:class:`str`]
             Unknown.
-        metadata: Optional[:class:`.Metadata`]
+        metadata: Optional[Mapping[:class:`str`, Any]]
             Extra metadata about the subscription.
         guild: Optional[:class:`.Guild`]
             The guild the previewed subscription's entitlements should be applied to.
@@ -3694,7 +3728,7 @@ class Client:
             The current checkout context.
         code: Optional[:class:`str`]
             Unknown.
-        metadata: Optional[:class:`.Metadata`]
+        metadata: Optional[Mapping[:class:`str`, Any]]
             Extra metadata about the subscription.
         guild: Optional[:class:`.Guild`]
             The guild the subscription's entitlements should be applied to.
@@ -5055,6 +5089,102 @@ class Client:
             experiments.append(GuildExperiment(state=state, data=exp))
 
         return experiments
+
+    async def join_hub_waitlist(self, email: str, school: str) -> None:
+        """|coro|
+
+        Signs up for the Discord Student Hub waitlist.
+
+        .. versionadded:: 2.1
+
+        Parameters
+        -----------
+        email: :class:`str`
+            The email to sign up with.
+        school: :class:`str`
+            The school name to sign up with.
+
+        Raises
+        -------
+        HTTPException
+            Signing up for the waitlist failed.
+        """
+        await self._connection.http.hub_waitlist_signup(email, school)
+
+    async def lookup_hubs(self, email: str, /) -> List[Guild]:
+        """|coro|
+
+        Looks up the Discord Student Hubs for the given email.
+
+        .. note::
+
+            Using this, you will only receive
+            :attr:`.Guild.id`, :attr:`.Guild.name`, and :attr:`.Guild.icon` per guild.
+
+        .. versionadded:: 2.1
+
+        Parameters
+        -----------
+        email: :class:`str`
+            The email to look up.
+
+        Raises
+        -------
+        HTTPException
+            Looking up the hubs failed.
+
+        Returns
+        --------
+        List[:class:`.Guild`]
+            The hubs found.
+        """
+        state = self._connection
+        data = await state.http.hub_lookup(email)
+        return [state.create_guild(d) for d in data.get('guilds_info', [])]  # type: ignore
+
+    @overload
+    async def join_hub(self, guild: Snowflake, email: str, *, code: None = ...) -> None:
+        ...
+
+    @overload
+    async def join_hub(self, guild: Snowflake, email: str, *, code: str = ...) -> Guild:
+        ...
+
+    async def join_hub(self, guild: Snowflake, email: str, *, code: Optional[str] = None) -> Optional[Guild]:
+        """|coro|
+
+        Joins the user to or requests a verification code for a Student Hub.
+
+        .. versionadded:: 2.1
+
+        Parameters
+        ----------
+        guild: :class:`.Guild`
+            The hub to join.
+        email: :class:`str`
+            The email to join with.
+        code: Optional[:class:`str`]
+            The email verification code.
+
+            .. note::
+
+                If not provided, this method requests a verification code instead.
+
+        Raises
+        ------
+        HTTPException
+            Joining the hub or requesting the verification code failed.
+        """
+        state = self._connection
+
+        if not code:
+            data = await state.http.hub_lookup(email, guild.id)
+            if not data.get('has_matching_guild'):
+                raise ValueError('Guild does not match email')
+            return
+
+        data = await state.http.join_hub(email, guild.id, code)
+        return state.create_guild(data['guild'])
 
     async def pomelo_suggestion(self) -> str:
         """|coro|
