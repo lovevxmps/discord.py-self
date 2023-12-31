@@ -634,12 +634,13 @@ class HTTPClient:
             self.connector = aiohttp.TCPConnector(limit=0)
         self.__asession = session = await _gen_session(aiohttp.ClientSession(connector=self.connector))
         self.super_properties, self.encoded_super_properties = sp, _ = await utils._get_info(session)
-        _log.info('Found user agent %s, build number %s.', sp.get('browser_user_agent'), sp.get('client_build_number'))
+        _log.info('Found user agent "%s", build number %s.', sp.get('browser_user_agent'), sp.get('client_build_number'))
 
         impersonate = f'chrome{self.browser_version[:3]}'
         if not requests.BrowserType.has(impersonate):
             chromes = [b.value for b in requests.BrowserType if b.value.startswith('chrome')]
             impersonate = max(chromes, key=lambda c: int(c[6:].split('_')[0]))
+        _log.info('Found TLS fingerprint target "%s".', impersonate)
         self.__session = requests.AsyncSession(impersonate=impersonate)
 
         self._started = True
