@@ -27,10 +27,8 @@ from __future__ import annotations
 import asyncio
 import datetime
 import logging
-import platform
 import ssl
 import string
-import sys
 from collections import deque
 from http import HTTPStatus
 from random import choice, choices
@@ -167,10 +165,6 @@ try:
 except Exception:
     # aiohttp does it for us on newer versions anyway
     pass
-
-# Required for curl_cffi to work unfortunately
-if platform.system() == 'Windows' and sys.version_info >= (3, 8):
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())  # type: ignore # Does not exist on non-Windows platforms
 
 
 async def json_or_text(response: Union[aiohttp.ClientResponse, requests.Response]) -> Union[Dict[str, Any], str]:
@@ -648,9 +642,6 @@ class HTTPClient:
             impersonate = max(chromes, key=lambda c: int(c[6:].split('_')[0]))
         self.__session = requests.AsyncSession(impersonate=impersonate)
 
-        if self.captcha_handler is not None:
-            await self.captcha_handler.startup()
-
         self._started = True
 
     async def ws_connect(self, url: str, *, compress: int = 0) -> aiohttp.ClientWebSocketResponse:
@@ -858,7 +849,7 @@ class HTTPClient:
                                 )
 
                     # 202s must be retried
-                    if response.status == 202 and isinstance(data, dict) and data['code'] == 110000:
+                    if response.status_code == 202 and isinstance(data, dict) and data['code'] == 110000:
                         # We update the `attempts` query parameter
                         params = kwargs.get('params')
                         if not params:
@@ -960,10 +951,8 @@ class HTTPClient:
 
                 # libcurl errors
                 except requests.RequestsError as e:
-                    if not getattr(e, 'code', None):
-                        # Outdated library or not an HTTP exception
-                        raise
-                    if e.code in (23, 28, 35):
+                    # Outdated library might be missing the code
+                    if getattr(e, 'code', None) in (23, 28, 35):
                         failed += 1
                         await asyncio.sleep(1 + tries * 2)
                         continue
@@ -1026,7 +1015,7 @@ class HTTPClient:
                         return data
 
                     # Unconditional retry
-                    if response.status in {500, 502, 504}:
+                    if response.status in {500, 502, 504, 507, 522, 523, 524}:
                         await asyncio.sleep(1 + tries * 2)
                         continue
 
