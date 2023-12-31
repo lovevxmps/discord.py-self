@@ -59,7 +59,7 @@ import aiohttp
 from curl_cffi import requests
 
 from . import utils
-from .enums import InviteType, RelationshipAction
+from .enums import InviteType, NetworkConnectionType, RelationshipAction
 from .errors import (
     CaptchaRequired,
     DiscordServerError,
@@ -92,8 +92,8 @@ if TYPE_CHECKING:
         audit_log,
         automod,
         billing,
-        command,
         channel,
+        command,
         directory,
         emoji,
         entitlements,
@@ -263,6 +263,7 @@ def handle_message_parameters(
     previous_allowed_mentions: Optional[AllowedMentions] = None,
     mention_author: Optional[bool] = None,
     thread_name: str = MISSING,
+    network_type: NetworkConnectionType = MISSING,
     channel_payload: Dict[str, Any] = MISSING,
 ) -> MultipartParameters:
     if files is not MISSING and file is not MISSING:
@@ -318,6 +319,9 @@ def handle_message_parameters(
 
     if thread_name is not MISSING:
         payload['thread_name'] = thread_name
+
+    if network_type is not MISSING:
+        payload['mobile_network_type'] = str(network_type)
 
     if allowed_mentions:
         if previous_allowed_mentions is not None:

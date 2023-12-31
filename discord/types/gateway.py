@@ -61,13 +61,13 @@ from .user import (
     User,
     UserGuildSettings,
 )
-from .voice import GuildVoiceState, VoiceState
+from .voice import GuildVoiceState, PrivateVoiceState, VoiceState
 
 T = TypeVar('T')
 
 
 class UserPresenceUpdateEvent(BasePresenceUpdate):
-    last_modified: int
+    ...
 
 
 PresenceUpdateEvent = Union[PartialPresenceUpdate, UserPresenceUpdateEvent]
@@ -428,7 +428,7 @@ class _GuildScheduledEventUsersEvent(TypedDict):
 
 GuildScheduledEventUserAdd = GuildScheduledEventUserRemove = _GuildScheduledEventUsersEvent
 
-VoiceStateUpdateEvent = GuildVoiceState
+VoiceStateUpdateEvent = Union[GuildVoiceState, PrivateVoiceState]
 
 
 class VoiceServerUpdateEvent(TypedDict):
@@ -559,7 +559,7 @@ class PartialUpdateChannel(TypedDict):
 class PassiveUpdateEvent(TypedDict):
     guild_id: Snowflake
     channels: List[PartialUpdateChannel]
-    voice_states: NotRequired[List[GuildVoiceState]]
+    voice_states: NotRequired[List[VoiceState]]
     members: NotRequired[List[MemberWithUser]]
 
 

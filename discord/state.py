@@ -128,7 +128,7 @@ if TYPE_CHECKING:
         PartialMessage as PartialMessagePayload,
     )
     from .types import gateway as gw
-    from .types.voice import VoiceState as VoiceStatePayload
+    from .types.voice import BaseVoiceState as VoiceStatePayload
     from .types.activity import ClientStatus as ClientStatusPayload
 
     T = TypeVar('T')
@@ -494,18 +494,16 @@ class ClientStatus:
 
 
 class Presence:
-    __slots__ = ('client_status', 'activities', 'last_modified')
+    __slots__ = ('client_status', 'activities')
 
     def __init__(self, data: gw.BasePresenceUpdate, state: ConnectionState, /) -> None:
         self.client_status: ClientStatus = ClientStatus(data['status'], data.get('client_status'))
         self.activities: Tuple[ActivityTypes, ...] = tuple(create_activity(d, state) for d in data['activities'])
-        self.last_modified: Optional[datetime.datetime] = utils.parse_timestamp(data.get('last_modified'))
 
     def __repr__(self) -> str:
         attrs = [
             ('client_status', self.client_status),
             ('activities', self.activities),
-            ('last_modified', self.last_modified),
         ]
         inner = ' '.join('%s=%r' % t for t in attrs)
         return f'<{self.__class__.__name__} {inner}>'
@@ -523,14 +521,12 @@ class Presence:
     def _update(self, data: gw.BasePresenceUpdate, state: ConnectionState, /) -> None:
         self.client_status._update(data['status'], data.get('client_status'))
         self.activities = tuple(create_activity(d, state) for d in data['activities'])
-        self.last_modified = utils.parse_timestamp(data.get('last_modified')) or utils.utcnow()
 
     @classmethod
     def _offline(cls) -> Self:
         self = cls.__new__(cls)  # bypass __init__
         self.client_status = ClientStatus()
         self.activities = ()
-        self.last_modified = None
         return self
 
     @classmethod
@@ -538,7 +534,6 @@ class Presence:
         self = cls.__new__(cls)  # bypass __init__
         self.client_status = ClientStatus._copy(presence.client_status)
         self.activities = presence.activities
-        self.last_modified = presence.last_modified
         return self
 
 
@@ -561,10 +556,6 @@ class FakeClientPresence(Presence):
     @property
     def activities(self) -> Tuple[ActivityTypes, ...]:
         return getattr(self._state.current_session, 'activities', ())
-
-    @property
-    def last_modified(self) -> Optional[datetime.datetime]:
-        return None
 
 
 async def logging_coroutine(coroutine: Coroutine[Any, Any, T], *, info: str) -> Optional[T]:
@@ -2806,10 +2797,15 @@ class ConnectionState:
             self.dispatch('call_delete', call)
 
     def parse_voice_state_update(self, data: gw.VoiceStateUpdateEvent) -> None:
-        guild = self._get_guild(utils._get_as_snowflake(data, 'guild_id'))
+        guild_id = utils._get_as_snowflake(data, 'guild_id')
+        guild = self._get_guild(guild_id)
         channel_id = utils._get_as_snowflake(data, 'channel_id')
         flags = self.member_cache_flags
         self_id = self.self_id
+
+        if guild_id is not None and guild is None:
+            _log.debug('VOICE_STATE_UPDATE referencing unknown guild ID: %s. Discarding.', guild_id)
+            return
 
         if int(data['user_id']) == self_id:
             voice = self._get_voice_client(guild.id if guild else self_id)
