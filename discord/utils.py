@@ -1444,9 +1444,7 @@ _BUILD_NUMBER_REGEX = re.compile(r'buildNumber\D+(\d+)"')
 
 async def _get_info(session: ClientSession) -> Tuple[Dict[str, Any], str]:
     try:
-        async with session.post('https://cordapi.dolfi.es/api/v2/properties/web', timeout=5) as resp:
-            json = await resp.json()
-            return json['properties'], json['encoded']
+        return await asyncio.wait_for(_get_api_properties(session, 'info'), timeout=3)
     except Exception:
         _log.info('Info API temporarily down. Falling back to manual retrieval...')
 
@@ -1480,6 +1478,12 @@ async def _get_info(session: ClientSession) -> Tuple[Dict[str, Any], str]:
         'design_id': 0,
     }
     return properties, b64encode(_to_json(properties).encode()).decode('utf-8')
+
+
+async def _get_api_properties(session: ClientSession, type: str) -> Tuple[Dict[str, Any], str]:
+    async with session.get(f'https://cordapi.dolfi.es/api/v2/properties/{type}') as resp:
+        json = await resp.json()
+        return json['properties'], json['encoded']
 
 
 async def _get_build_number(session: ClientSession) -> int:

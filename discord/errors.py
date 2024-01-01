@@ -29,8 +29,8 @@ from typing import TYPE_CHECKING, Any, Dict, Final, List, Optional, Tuple, Union
 from .utils import _get_as_snowflake
 
 if TYPE_CHECKING:
-    from aiohttp import ClientResponse, ClientWebSocketResponse
-    from curl_cffi.requests import Response as CurlResponse
+    from aiohttp import ClientResponse
+    from curl_cffi.requests import Response as CurlResponse, WebSocket
     from requests import Response
     from typing_extensions import TypeGuard
 
@@ -301,10 +301,10 @@ class ConnectionClosed(ClientException):
 
     __slots__ = ('code', 'reason')
 
-    def __init__(self, socket: ClientWebSocketResponse, *, code: Optional[int] = None):
+    def __init__(self, code: Optional[int] = None, reason: Optional[str] = None):
         # This exception is just the same exception except
         # reconfigured to subclass ClientException for users
-        self.code: int = code or socket.close_code or -1
+        self.code: int = code or -1
         # aiohttp doesn't seem to consistently provide close reason
-        self.reason: str = ''
-        super().__init__(f'WebSocket closed with {self.code}')
+        self.reason: str = reason or ''
+        super().__init__(f'WebSocket closed with {self.code} (reason: {self.reason!r})')

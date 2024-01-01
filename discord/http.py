@@ -645,25 +645,24 @@ class HTTPClient:
 
         self._started = True
 
-    async def ws_connect(self, url: str, *, compress: int = 0) -> aiohttp.ClientWebSocketResponse:
-        kwargs: Dict[str, Any] = {
-            'proxy_auth': self.proxy_auth,
-            'proxy': self.proxy,
-            'max_msg_size': 0,
-            'timeout': 30.0,
-            'autoclose': False,
-            'headers': {
-                'Accept-Language': 'en-US,en;q=0.9',
-                'Cache-Control': 'no-cache',
-                'Origin': 'https://discord.com',
-                'Pragma': 'no-cache',
-                'Sec-WebSocket-Extensions': 'permessage-deflate; client_max_window_bits',
-                'User-Agent': self.user_agent,
-            },
-            'compress': compress,
-        }
+    async def ws_connect(self, url: str, **kwargs) -> requests.WebSocket:
+        await self.startup()
 
-        return await self.__asession.ws_connect(url, **kwargs)
+        headers: Dict[str, Any] = {
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Cache-Control': 'no-cache',
+            'Origin': 'https://discord.com',
+            'Pragma': 'no-cache',
+            'Sec-WebSocket-Extensions': 'permessage-deflate; client_max_window_bits',
+            'User-Agent': self.user_agent,
+        }
+        if self.proxy is not None:
+            kwargs['proxies'] = {'http': self.proxy, 'https': self.proxy}
+        if self.proxy_auth is not None:
+            headers['Proxy-Authorization'] = self.proxy_auth.encode()
+
+        session = self.__session
+        return await session.ws_connect(url, headers=headers, impersonate=session.impersonate, timeout=30.0, **kwargs)
 
     @property
     def browser_version(self) -> str:
