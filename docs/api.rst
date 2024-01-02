@@ -3960,6 +3960,12 @@ of :class:`enum.Enum`.
 
         The payment source is an iDEAL account.
 
+    .. attribute:: cash_app
+
+        The payment source is a Cash App account.
+
+        .. versionadded:: 2.1
+
 .. class:: PaymentGateway
 
     Represents the payment gateway used for a payment source.
@@ -4223,6 +4229,83 @@ of :class:`enum.Enum`.
 
         The entitlement is an application subscription.
 
+.. class:: RefundReason
+
+    Represents the reason for a refund.
+
+    .. versionadded:: 2.1
+
+    .. attribute:: other
+
+        The refund is due to another reason.
+
+    .. attribute:: gifting_refund
+
+        The refund is due to an unwanted gift.
+
+    .. attribute:: buyers_remorse
+
+        The refund is due to buyer's remorse.
+
+    .. attribute:: wrong_purchase
+
+        The refund is due to a wrong purchase.
+
+    .. attribute:: forgot_to_cancel
+
+        The refund is due to forgetting to cancel a subscription.
+
+    .. attribute:: premium_guild_cooldown
+
+        The refund is due to a premium guild (boosting) cooldown.
+
+    .. attribute:: user_confusion
+
+        The refund is due to user confusion.
+
+    .. attribute:: want_to_switch_tiers
+
+        The refund is due to wanting to switch premium (Nitro) tiers.
+
+    .. attribute:: dont_need
+
+        The refund is due to not needing the purchase.
+
+.. class:: RefundDisqualificationReason
+
+    Represents the reason for a refund disqualification.
+
+    .. versionadded:: 2.1
+
+    .. attribute:: other
+
+        The purchase is disqualified from a refund due to another reason.
+
+    .. attribute:: already_refunded
+
+        The purchase is disqualified from a refund because it has already been refunded.
+
+    .. attribute:: not_user_refundable_type
+
+        The purchase is disqualified from a refund because it is not a user refundable type.
+        The user must contact Discord support to request a refund.
+
+    .. attribute:: past_refundable_date
+
+        The purchase is disqualified from a refund because it is past the refundable date.
+
+    .. attribute:: entitlement_already_consumed
+
+        The purchase is disqualified from a refund because the purchased entitlement has already been consumed.
+
+    .. attribute:: already_refunded_premium
+
+        The purchase is disqualified from a refund because the user has already refunded a premium (Nitro) purchase.
+
+    .. attribute:: already_refunded_premium_guild
+
+        The purchase is disqualified from a refund because the user has already refunded a premium guild (boosting) purchase.
+
 .. class:: SKUType
 
     Represents the type of a SKU.
@@ -4270,6 +4353,40 @@ of :class:`enum.Enum`.
     .. attribute:: vip_access
 
         The SKU is available to VIP users only.
+
+.. class:: SKUProductLine
+
+    Represents the product line of a SKU.
+
+    .. versionadded:: 2.1
+
+    .. attribute:: premium
+
+        The SKU is a premium (Nitro) product.
+
+    .. attribute:: premium_guild
+
+        The SKU is a premium guild product.
+
+    .. attribute:: iap
+
+        The SKU is an embedded in-app purchase.
+
+    .. attribute:: guild_role
+
+        The SKU is a guild role subscription.
+
+    .. attribute:: guild_product
+
+        The SKU is a guild product.
+
+    .. attribute:: application
+
+        The SKU is an application subscription.
+
+    .. attribute:: collectible
+
+        The SKU is a collectible avatar decoration or profile effect.
 
 .. class:: SKUFeature
 
