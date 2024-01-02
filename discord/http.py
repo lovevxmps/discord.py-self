@@ -52,6 +52,7 @@ from typing import (
     overload,
 )
 from urllib.parse import quote as _uriquote
+import warnings
 
 import aiohttp
 from curl_cffi import requests
@@ -165,6 +166,9 @@ try:
 except Exception:
     # aiohttp does it for us on newer versions anyway
     pass
+
+# HACK: Ignore event loop warnings from curl_cffi
+warnings.filterwarnings('ignore', module='curl_cffi')
 
 
 async def json_or_text(response: Union[aiohttp.ClientResponse, requests.Response]) -> Union[Dict[str, Any], str]:
