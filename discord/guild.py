@@ -486,7 +486,6 @@ class Guild(Hashable):
         'premium_progress_bar_enabled',
         '_presence_count',
         '_true_online_count',
-        '_chunked',
         '_member_list',
         'keywords',
         'primary_category_id',
@@ -505,7 +504,6 @@ class Guild(Hashable):
     }
 
     def __init__(self, *, data: Union[BaseGuildPayload, GuildPayload], state: ConnectionState) -> None:
-        self._chunked = False
         self._cs_joined: Optional[bool] = None
         self._roles: Dict[int, Role] = {}
         self._channels: Dict[int, GuildChannel] = {}
@@ -707,7 +705,9 @@ class Guild(Hashable):
 
         counts = guild.get('application_command_counts')
         if counts:
-            self.application_command_counts = ApplicationCommandCounts(counts.get(1, 0), counts.get(2, 0), counts.get(3, 0))
+            self.application_command_counts = ApplicationCommandCounts(
+                counts.get(1, 0), counts.get(2, 0), counts.get(3, 0)
+            )
 
         for vs in guild.get('voice_states', []):
             self._update_voice_state(vs, int(vs['channel_id']))
@@ -715,7 +715,11 @@ class Guild(Hashable):
         cache_flags = state.member_cache_flags
         for mdata in guild.get('members', []):
             member = Member(data=mdata, guild=self, state=state)
-            if cache_flags.joined or member.id == state.self_id or (cache_flags.voice and member.id in self._voice_states):
+            if (
+                cache_flags.joined
+                or member.id == state.self_id
+                or (cache_flags.voice and member.id in self._voice_states)
+            ):
                 self._add_member(member)
 
         for presence in guild.get('presences', []):
@@ -751,7 +755,13 @@ class Guild(Hashable):
 
     @property
     def _offline_members_hidden(self) -> bool:
-        return (self._member_count or 0) > 1000
+        # Member count, hoisted role count, and Online/Offline group
+        # This may not be 100% accurate because member list groups are cached server-side
+        return (self._member_count or 0) + len([role for role in self.roles if role.hoist]) + 2 >= 1000
+
+    @property
+    def _extra_large(self) -> bool:
+        return self._member_count is not None and self._member_count >= 75000
 
     def is_hub(self) -> bool:
         """:class:`bool`: Whether the guild is a Student Hub.
@@ -1338,7 +1348,10 @@ class Guild(Hashable):
         If this value returns ``False``, then you should request for
         offline members.
         """
-        return self._chunked
+        count = self._member_count
+        if count is None:
+            return False
+        return count == len(self._members)
 
     @property
     def created_at(self) -> datetime:
@@ -1402,8 +1415,7 @@ class Guild(Hashable):
         overwrites: Mapping[Union[Role, Member], PermissionOverwrite] = ...,
         category: Optional[Snowflake] = ...,
         **options: Any,
-    ) -> Coroutine[Any, Any, TextChannelPayload]:
-        ...
+    ) -> Coroutine[Any, Any, TextChannelPayload]: ...
 
     @overload
     def _create_channel(
@@ -1413,8 +1425,7 @@ class Guild(Hashable):
         overwrites: Mapping[Union[Role, Member], PermissionOverwrite] = ...,
         category: Optional[Snowflake] = ...,
         **options: Any,
-    ) -> Coroutine[Any, Any, VoiceChannelPayload]:
-        ...
+    ) -> Coroutine[Any, Any, VoiceChannelPayload]: ...
 
     @overload
     def _create_channel(
@@ -1424,8 +1435,7 @@ class Guild(Hashable):
         overwrites: Mapping[Union[Role, Member], PermissionOverwrite] = ...,
         category: Optional[Snowflake] = ...,
         **options: Any,
-    ) -> Coroutine[Any, Any, StageChannelPayload]:
-        ...
+    ) -> Coroutine[Any, Any, StageChannelPayload]: ...
 
     @overload
     def _create_channel(
@@ -1435,8 +1445,7 @@ class Guild(Hashable):
         overwrites: Mapping[Union[Role, Member], PermissionOverwrite] = ...,
         category: Optional[Snowflake] = ...,
         **options: Any,
-    ) -> Coroutine[Any, Any, CategoryChannelPayload]:
-        ...
+    ) -> Coroutine[Any, Any, CategoryChannelPayload]: ...
 
     @overload
     def _create_channel(
@@ -1446,8 +1455,7 @@ class Guild(Hashable):
         overwrites: Mapping[Union[Role, Member], PermissionOverwrite] = ...,
         category: Optional[Snowflake] = ...,
         **options: Any,
-    ) -> Coroutine[Any, Any, NewsChannelPayload]:
-        ...
+    ) -> Coroutine[Any, Any, NewsChannelPayload]: ...
 
     @overload
     def _create_channel(
@@ -1457,8 +1465,7 @@ class Guild(Hashable):
         overwrites: Mapping[Union[Role, Member], PermissionOverwrite] = ...,
         category: Optional[Snowflake] = ...,
         **options: Any,
-    ) -> Coroutine[Any, Any, Union[TextChannelPayload, NewsChannelPayload]]:
-        ...
+    ) -> Coroutine[Any, Any, Union[TextChannelPayload, NewsChannelPayload]]: ...
 
     @overload
     def _create_channel(
@@ -1468,8 +1475,7 @@ class Guild(Hashable):
         overwrites: Mapping[Union[Role, Member], PermissionOverwrite] = ...,
         category: Optional[Snowflake] = ...,
         **options: Any,
-    ) -> Coroutine[Any, Any, ForumChannelPayload]:
-        ...
+    ) -> Coroutine[Any, Any, ForumChannelPayload]: ...
 
     @overload
     def _create_channel(
@@ -1479,8 +1485,7 @@ class Guild(Hashable):
         overwrites: Mapping[Union[Role, Member], PermissionOverwrite] = ...,
         category: Optional[Snowflake] = ...,
         **options: Any,
-    ) -> Coroutine[Any, Any, DirectoryChannelPayload]:
-        ...
+    ) -> Coroutine[Any, Any, DirectoryChannelPayload]: ...
 
     @overload
     def _create_channel(
@@ -1490,8 +1495,7 @@ class Guild(Hashable):
         overwrites: Mapping[Union[Role, Member], PermissionOverwrite] = ...,
         category: Optional[Snowflake] = ...,
         **options: Any,
-    ) -> Coroutine[Any, Any, GuildChannelPayload]:
-        ...
+    ) -> Coroutine[Any, Any, GuildChannelPayload]: ...
 
     def _create_channel(
         self,
@@ -1853,7 +1857,12 @@ class Guild(Hashable):
             options['video_quality_mode'] = video_quality_mode.value
 
         data = await self._create_channel(
-            name, overwrites=overwrites, channel_type=ChannelType.stage_voice, category=category, reason=reason, **options
+            name,
+            overwrites=overwrites,
+            channel_type=ChannelType.stage_voice,
+            category=category,
+            reason=reason,
+            **options,
         )
         channel = StageChannel(state=self._state, guild=self, data=data)
 
@@ -2102,7 +2111,9 @@ class Guild(Hashable):
             if isinstance(default_reaction_emoji, _EmojiTag):
                 options['default_reaction_emoji'] = default_reaction_emoji._to_partial()._to_forum_tag_payload()
             elif isinstance(default_reaction_emoji, str):
-                options['default_reaction_emoji'] = PartialEmoji.from_str(default_reaction_emoji)._to_forum_tag_payload()
+                options['default_reaction_emoji'] = PartialEmoji.from_str(
+                    default_reaction_emoji
+                )._to_forum_tag_payload()
             else:
                 raise ValueError(f'default_reaction_emoji parameter must be either Emoji, PartialEmoji, or str')
 
@@ -2118,7 +2129,12 @@ class Guild(Hashable):
             options['available_tags'] = [t.to_dict() for t in available_tags]
 
         data = await self._create_channel(
-            name=name, overwrites=overwrites, channel_type=ChannelType.forum, category=category, reason=reason, **options
+            name=name,
+            overwrites=overwrites,
+            channel_type=ChannelType.forum,
+            category=category,
+            reason=reason,
+            **options,
         )
 
         channel = ForumChannel(state=self._state, guild=self, data=data)
@@ -2635,7 +2651,10 @@ class Guild(Hashable):
         """
         state = self._state
         data = await state.http.get_user_profile(
-            member_id, self.id, with_mutual_guilds=with_mutual_guilds, with_mutual_friends_count=with_mutual_friends_count
+            member_id,
+            self.id,
+            with_mutual_guilds=with_mutual_guilds,
+            with_mutual_friends_count=with_mutual_friends_count,
         )
         if 'guild_member_profile' not in data:
             raise InvalidData('Member is not in this guild')
@@ -3467,7 +3486,8 @@ class Guild(Hashable):
         """
         data = await self._state.http.get_subscribed_scheduled_events(self.id)
         return [
-            self.get_scheduled_event(int(d['guild_scheduled_event_id'])) or Object(id=int(d['guild_scheduled_event_id']))
+            self.get_scheduled_event(int(d['guild_scheduled_event_id']))
+            or Object(id=int(d['guild_scheduled_event_id']))
             for d in data
         ]
 
@@ -3541,8 +3561,7 @@ class Guild(Hashable):
         image: bytes = ...,
         directory_broadcast: bool = ...,
         reason: Optional[str] = ...,
-    ) -> ScheduledEvent:
-        ...
+    ) -> ScheduledEvent: ...
 
     @overload
     async def create_scheduled_event(
@@ -3558,8 +3577,7 @@ class Guild(Hashable):
         image: bytes = ...,
         directory_broadcast: bool = ...,
         reason: Optional[str] = ...,
-    ) -> ScheduledEvent:
-        ...
+    ) -> ScheduledEvent: ...
 
     @overload
     async def create_scheduled_event(
@@ -3574,8 +3592,7 @@ class Guild(Hashable):
         image: bytes = ...,
         directory_broadcast: bool = ...,
         reason: Optional[str] = ...,
-    ) -> ScheduledEvent:
-        ...
+    ) -> ScheduledEvent: ...
 
     @overload
     async def create_scheduled_event(
@@ -3590,8 +3607,7 @@ class Guild(Hashable):
         image: bytes = ...,
         directory_broadcast: bool = ...,
         reason: Optional[str] = ...,
-    ) -> ScheduledEvent:
-        ...
+    ) -> ScheduledEvent: ...
 
     async def create_scheduled_event(
         self,
@@ -3951,8 +3967,7 @@ class Guild(Hashable):
         mentionable: bool = ...,
         icon: Optional[bytes] = ...,
         emoji: Optional[PartialEmoji] = ...,
-    ) -> Role:
-        ...
+    ) -> Role: ...
 
     @overload
     async def create_role(
@@ -3965,8 +3980,7 @@ class Guild(Hashable):
         hoist: bool = ...,
         display_icon: Union[bytes, str] = MISSING,
         mentionable: bool = ...,
-    ) -> Role:
-        ...
+    ) -> Role: ...
 
     async def create_role(
         self,
@@ -4091,7 +4105,9 @@ class Guild(Hashable):
         # TODO: add to cache
         return role
 
-    async def edit_role_positions(self, positions: Mapping[Snowflake, int], *, reason: Optional[str] = None) -> List[Role]:
+    async def edit_role_positions(
+        self, positions: Mapping[Snowflake, int], *, reason: Optional[str] = None
+    ) -> List[Role]:
         """|coro|
 
         Bulk edits a list of :class:`Role` in the guild.
@@ -4490,7 +4506,9 @@ class Guild(Hashable):
             )
             automod_rule_map = {rule.id: rule for rule in automod_rules}
 
-            webhooks = (Webhook.from_state(data=raw_webhook, state=self._state) for raw_webhook in data.get('webhooks', []))
+            webhooks = (
+                Webhook.from_state(data=raw_webhook, state=self._state) for raw_webhook in data.get('webhooks', [])
+            )
             webhook_map = {webhook.id: webhook for webhook in webhooks}
 
             count = 0
@@ -4714,7 +4732,10 @@ class Guild(Hashable):
             The applications that belong to this guild.
         """
         data = await self._state.http.get_guild_applications(
-            self.id, include_team=with_team, type=int(type) if type else None, channel_id=channel.id if channel else None
+            self.id,
+            include_team=with_team,
+            type=int(type) if type else None,
+            channel_id=channel.id if channel else None,
         )
         return [PartialApplication(state=self._state, data=app) for app in data]
 
@@ -4987,7 +5008,6 @@ class Guild(Hashable):
 
             .. versionadded:: 2.0
 
-
         Raises
         -------
         asyncio.TimeoutError
@@ -5126,7 +5146,7 @@ class Guild(Hashable):
             to perform this operation unless you passed ``request_guilds=False``
             to your :class:`Client`.
         """
-        await self._state.request_guild(self.id, **kwargs)
+        await self._state.request_guild(self, **kwargs)
 
     async def automod_rules(self) -> List[AutoModRule]:
         """|coro|

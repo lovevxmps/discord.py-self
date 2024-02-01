@@ -875,7 +875,7 @@ class Thread(Messageable, Hashable):
             All thread members in the thread.
         """
         state = self._state
-        await state.ws.request_lazy_guild(self.parent.guild.id, thread_member_lists=[self.id])  # type: ignore
+        await state.subscriptions.subscribe_to_threads(self.guild, self)
         future = state.ws.wait_for('thread_member_list_update', lambda d: int(d['thread_id']) == self.id)
         try:
             data = await asyncio.wait_for(future, timeout=15)

@@ -367,7 +367,14 @@ class Capabilities(BaseFlags):
     @flag_value
     def unknown_12(self):
         """:class:`bool`: Unknown."""
+        # Might be pomelo or family center related
         return 1 << 12
+
+    @flag_value
+    def message_reaction_debouncing(self):
+        """:class:`bool`: Unknown."""
+        # Almost definitely message reaction debouncing (MESSAGE_REACTION_ADD_MANY)
+        return 1 << 13
 
 
 @fill_with_flags(inverted=True)
@@ -1171,23 +1178,17 @@ class MemberCacheFlags(BaseFlags):
         return 1
 
     @flag_value
-    def other(self):
-        """:class:`bool`: Whether to cache members that are collected from other means.
+    def joined(self):
+        """:class:`bool`: Whether to cache members that joined the guild
+        or are chunked as part of the initial log in flow.
 
-        This does not apply to members explicitly cached (e.g. :attr:`Guild.chunk`, :attr:`Guild.fetch_members`).
-
-        There is an alias for this called :attr:`joined`.
+        Members that leave the guild are no longer cached.
         """
         return 2
 
     @alias_flag_value
-    def joined(self):
-        """:class:`bool`: Whether to cache members that are collected from other means.
-
-        This does not apply to members explicitly cached (e.g. :attr:`Guild.chunk`, :attr:`Guild.fetch_members`).
-
-        This is an alias for :attr:`other`.
-        """
+    def other(self):
+        """:class:`bool`: Alias for :attr:`joined`."""
         return 2
 
     @property
