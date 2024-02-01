@@ -2659,12 +2659,11 @@ class ConnectionState:
         guild = self._get_guild(int(data['id']))
         unavailable = data.get('unavailable')
 
-        # Discord being Discord sometimes sends a GUILD_CREATE after an OPCode 14 is sent (a la bots)
+        # Discord being Discord sometimes sends a GUILD_CREATE after subscribing to a guild
         # In this case, we just update it and return None to avoid a double dispatch
-        # However, if the guild became available, then we gotta go through the motions
         if guild is not None:
             guild._from_data(data)
-            if unavailable != False:
+            if unavailable is not False:
                 return
 
         return guild or self._add_guild_from_data(data)
@@ -2831,12 +2830,24 @@ class ConnectionState:
         timeout = self._chunk_timeout(guild)
 
         if chunk:
-            try:
-                await asyncio.wait_for(self.chunk_guild(guild), timeout=timeout)
-            except asyncio.TimeoutError:
-                _log.info('Somehow timed out waiting for chunks for guild %s.', guild.id)
-            except (ClientException, InvalidData):
-                pass
+            coro = None
+            if await self._can_chunk_guild(guild):
+                coro = self.chunk_guild(guild)
+            elif not guild._offline_members_hidden:
+                self._scrape_requests[guild.id] = request = MemberSidebar(
+                    guild, MISSING, chunk=True, cache=True, loop=self.loop, delay=0
+                )
+                if request.channels:
+                    request.start()
+                    coro = request.get_future()
+
+            if coro is not None:
+                try:
+                    await asyncio.wait_for(coro, timeout=timeout)
+                except asyncio.TimeoutError:
+                    _log.warning('Somehow timed out waiting for chunks for guild %s.', guild.id)
+                except (ClientException, InvalidData):
+                    pass
 
         if unavailable is False:
             self.dispatch('guild_available', guild)

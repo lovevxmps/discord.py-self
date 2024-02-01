@@ -634,6 +634,7 @@ class GuildChannel:
                 overwrites.append(f"allow:{overwrite.id}")
             elif deny.read_messages:
                 overwrites.append(f"deny:{overwrite.id}")
+
         return str(utils.murmurhash32(",".join(sorted(overwrites)), signed=False))
 
     def _update(self, guild: Guild, data: Dict[str, Any]) -> None:

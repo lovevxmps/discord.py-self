@@ -4864,7 +4864,7 @@ class Guild(Hashable):
         """
         return await self._state.http.get_price_tier(price_tier)
 
-    async def chunk(self, channel: Snowflake = MISSING) -> List[Member]:
+    async def chunk(self, *, cache: bool = True) -> List[Member]:
         """|coro|
 
         Requests all members that belong to this guild.
@@ -4886,19 +4886,24 @@ class Guild(Hashable):
             This guild cannot be chunked or chunking failed.
             Guild is no longer available.
         InvalidData
-            Did not receive a response from the gateway.
+            Did not receive a response from the Gateway.
 
         Returns
         --------
         List[:class:`Member`]
             The members that belong to this guild.
         """
-        if self._offline_members_hidden:
-            raise ClientException('This guild cannot be chunked')
-        if self._state.is_guild_evicted(self):
+        state = self._state
+        if state.is_guild_evicted(self):
             raise ClientException('This guild is no longer available')
 
-        members = await self._state.chunk_guild(self, channels=[channel] if channel else [])
+        if await state._can_chunk_guild(self):
+            members = await state.chunk_guild(self, cache=cache)
+        elif not self._offline_members_hidden:
+            ...
+        else:
+            raise ClientException('This guild cannot be chunked')
+
         return members
 
     async def fetch_members(
