@@ -29,9 +29,9 @@ from collections import deque, OrderedDict
 import copy
 import datetime
 import logging
-from tokenize import group
 from typing import (
     Dict,
+    Final,
     Optional,
     TYPE_CHECKING,
     Union,
@@ -45,6 +45,7 @@ from typing import (
     Literal,
     overload,
     Sequence,
+    Set,
 )
 import weakref
 import inspect
@@ -429,7 +430,9 @@ class MemberSidebar:
             await state.subscriptions.subscribe_to_channels(guild, requests, replace=True)
 
             try:
-                await asyncio.wait_for(state.ws.wait_for('GUILD_MEMBER_LIST_UPDATE', predicate), timeout=state._chunk_timeout(guild))
+                await asyncio.wait_for(
+                    state.ws.wait_for('GUILD_MEMBER_LIST_UPDATE', predicate), timeout=state._chunk_timeout(guild)
+                )
             except asyncio.TimeoutError:
                 r = tuple(requests.values())[-1][-1]
                 if self.limit in range(r[0], r[1]) or self.limit < r[1]:
@@ -486,6 +489,10 @@ class GuildSubscriptions:
     subscribed to all members in the thread, akin to using ``members``. This field has no cap except for the max payload size.
     """
 
+    # I thought it was 4096 bytes, but this is taken from the client
+    MAX_PAYLOAD_SIZE: Final[int] = 15360
+    TICK_TIMEOUT: Final[float] = 0.5
+
     __slots__ = (
         '_state',
         '_pending',
@@ -506,7 +513,9 @@ class GuildSubscriptions:
         self._pending: gw.BulkGuildSubscribePayload = {}
         self._task: Optional[asyncio.Task[None]] = None
         self._blocked: bool = False
+        self.clear()
 
+    def clear(self) -> None:
         # Feature subscriptions
         self._subscribed: utils.SnowflakeList = utils.SnowflakeList()
         self._typing: utils.SnowflakeList = utils.SnowflakeList()
@@ -533,8 +542,9 @@ class GuildSubscriptions:
 
     async def _tick_task(self) -> None:
         try:
-            await asyncio.sleep(1)
+            await asyncio.sleep(self.TICK_TIMEOUT)
             await self._flush()
+            self._task = None
         except asyncio.CancelledError:
             pass
 
@@ -544,6 +554,10 @@ class GuildSubscriptions:
             self._task = self._state.loop.create_task(self._tick_task())
 
     @property
+    def empty(self) -> bool:
+        return not self._subscribed and not self._pending
+
+    @property
     def blocked(self) -> bool:
         return self._blocked
 
@@ -551,18 +565,64 @@ class GuildSubscriptions:
     def blocked(self, value: bool, /) -> None:
         if self._blocked == value:
             return
+        self._blocked = value
         if value:
-            self._blocked = True
             self._cancel()
         else:
-            self._blocked = False
             self._tick()
+
+    async def _requeue_subscriptions(self):
+        # We need to send all our subscriptions again if we reconnect
+        pending = self._pending
+        subscribed = self._subscribed
+        typing = self._typing
+        threads = self._threads
+        activities = self._activities
+        member_updates = self._member_updates
+        members = self._members
+        thread_member_lists = self._thread_member_lists
+        channels = self._channels
+        self.clear()
+
+        for guild_id in self._state._guilds:
+            if guild_id not in subscribed:
+                continue
+
+            payload: gw.BaseGuildSubscribePayload = {
+                # Ensure we are subscribed to the guild
+                'typing': guild_id in typing or guild_id in subscribed,
+                'threads': guild_id in threads,
+                'activities': guild_id in activities,
+                'member_updates': guild_id in member_updates,
+                'members': list(members.get(guild_id, ())),
+                'thread_member_lists': list(thread_member_lists.get(guild_id, ())),
+                'channels': channels.get(guild_id, {}),  # type: ignore
+            }
+            if str(guild_id) in pending:
+                payload.update(pending[str(guild_id)])
+            if payload:
+                await self._checked_add({str(guild_id): payload})
 
     def is_subscribed(self, guild: abcSnowflake, /) -> bool:
         return guild.id in self._subscribed
 
-    def has_feature(self, guild: abcSnowflake, feature: Literal['typing', 'threads', 'activities', 'member_updates'], /) -> bool:
-        return getattr(self, f'_{feature}').contains(guild.id)
+    def _is_pending_subscribe(self, guild_id: int, /) -> bool:
+        return guild_id in self._subscribed or (
+            str(guild_id) in self._pending and self._pending[str(guild_id)].get('typing') is True
+        )
+
+    def has_feature(
+        self, guild: abcSnowflake, feature: Literal['typing', 'threads', 'activities', 'member_updates'], /
+    ) -> bool:
+        # getattr is less performant
+        if feature == 'typing':
+            return self._typing.has(guild.id)
+        elif feature == 'threads':
+            return self._threads.has(guild.id)
+        elif feature == 'activities':
+            return self._activities.has(guild.id)
+        elif feature == 'member_updates':
+            return self._member_updates.has(guild.id)
 
     def members_for(self, guild: abcSnowflake, /) -> Sequence[int]:
         return utils.SequenceProxy(self._members.get(guild.id, ()))
@@ -575,7 +635,7 @@ class GuildSubscriptions:
 
     async def _checked_add(self, changes: gw.BulkGuildSubscribePayload, /) -> None:
         # n.b. changes should have a single key
-        # We need to check if the new payload is larger than 4096 bytes
+        # We need to check if the new payload is larger than MAX_PAYLOAD_SIZE bytes
         # If it is, we need to flush the old payload and start a new one
         # If there isn't an old payload and the new payload is larger, this is impossible
         EMPTY: Any = {}
@@ -584,8 +644,8 @@ class GuildSubscriptions:
             old = new_payload.get(guild_id, EMPTY)
             new_payload[guild_id] = {**old, **subscriptions}
 
-        if len(utils._to_json(new_payload)) > 4000:
-            if len(utils._to_json(changes)) > 4000:
+        if len(utils._to_json(new_payload)) > self.MAX_PAYLOAD_SIZE:
+            if len(utils._to_json(changes)) > self.MAX_PAYLOAD_SIZE:
                 raise ValueError('Guild subscription payload too large to send')
             await self._flush()
             self._pending = changes
@@ -626,6 +686,12 @@ class GuildSubscriptions:
                     else:
                         record.pop(guild_id, None)
 
+    async def send(self) -> None:
+        should_tick = self._task is not None
+        await self._flush()
+        if should_tick:
+            self._tick()
+
     async def subscribe_to(
         self,
         guild: abcSnowflake,
@@ -637,7 +703,7 @@ class GuildSubscriptions:
         member_updates: bool = MISSING,
     ):
         # Sanity check
-        if guild.id not in self._subscribed:
+        if not self._is_pending_subscribe(guild.id):
             if typing is MISSING:
                 typing = True
             if not typing:
@@ -660,30 +726,62 @@ class GuildSubscriptions:
         if not replace and not members:
             return
 
+        # Sanity check
+        if not self._is_pending_subscribe(guild.id):
+            raise TypeError('Cannot subscribe to guild without subscribing to typing')
+
         payload: gw.BaseGuildSubscribePayload = {}
-        values: List[Snowflake] = [member.id for member in members]
+        values: Set[Snowflake] = {member.id for member in members}
         if not replace:
             existing = self._members.get(guild.id)
             if existing:
-                values.extend(existing)
+                values.update(existing)
 
-        payload['members'] = values
+        payload['members'] = list(values)
         await self._checked_add({str(guild.id): payload})
 
-    async def subscribe_to_threads(
-        self, guild: abcSnowflake, /, *threads: abcSnowflake, replace: bool = False
-    ) -> None:
-        if not replace and not threads:
+    async def unsubscribe_from_members(self, guild: abcSnowflake, /, *members: abcSnowflake) -> None:
+        # Sanity check
+        if not self._is_pending_subscribe(guild.id):
             return
 
         payload: gw.BaseGuildSubscribePayload = {}
-        values: List[Snowflake] = [thread.id for thread in threads]
+        existing = self._members.get(guild.id)
+        to_remove = [member.id for member in members]
+
+        if existing:
+            payload['members'] = [member for member in existing if member not in to_remove]
+        await self._checked_add({str(guild.id): payload})
+
+    async def subscribe_to_threads(self, guild: abcSnowflake, /, *threads: abcSnowflake, replace: bool = False) -> None:
+        if not replace and not threads:
+            return
+
+        # Sanity check
+        if not self._is_pending_subscribe(guild.id):
+            raise TypeError('Cannot subscribe to guild without subscribing to typing')
+
+        payload: gw.BaseGuildSubscribePayload = {}
+        values: set[Snowflake] = {thread.id for thread in threads}
         if not replace:
             existing = self._thread_member_lists.get(guild.id)
             if existing:
-                values.extend(existing)
+                values.update(existing)
 
-        payload['thread_member_lists'] = values
+        payload['thread_member_lists'] = list(values)
+        await self._checked_add({str(guild.id): payload})
+
+    async def unsubscribe_from_threads(self, guild: abcSnowflake, /, *threads: abcSnowflake) -> None:
+        # Sanity check
+        if not self._is_pending_subscribe(guild.id):
+            return
+
+        payload: gw.BaseGuildSubscribePayload = {}
+        existing = self._thread_member_lists.get(guild.id)
+        to_remove = [thread.id for thread in threads]
+
+        if existing:
+            payload['thread_member_lists'] = [thread for thread in existing if thread not in to_remove]
         await self._checked_add({str(guild.id): payload})
 
     async def subscribe_to_channels(
@@ -693,7 +791,7 @@ class GuildSubscriptions:
             return
 
         # Sanity check
-        if not (guild.id in self._subscribed or (str(guild.id) in self._pending and self._pending[str(guild.id)].get('typing'))):
+        if not self._is_pending_subscribe(guild.id):
             raise TypeError('Cannot subscribe to guild without subscribing to typing')
 
         payload: gw.BaseGuildSubscribePayload = {}
@@ -871,7 +969,7 @@ class ConnectionState:
                 status = str(status)
 
         chunk_guilds = options.get('chunk_guilds_at_startup', MISSING)
-        self._request_guilds = options.get('request_guilds', True)
+        subscribe_guilds = options.get('guild_subscriptions', options.get('request_guilds', True))
 
         cache_flags = options.get('member_cache_flags', None)
         if cache_flags is None:
@@ -882,8 +980,11 @@ class ConnectionState:
 
         if not cache_flags.joined and chunk_guilds:
             raise ClientException('Cannot chunk guilds at startup without a member cache')
+        if chunk_guilds and not subscribe_guilds:
+            raise ClientException('Cannot chunk guilds at startup without subscribing to them')
 
         self._chunk_guilds: bool = chunk_guilds if chunk_guilds is not MISSING else cache_flags.joined
+        self._subscribe_guilds: bool = subscribe_guilds
         self.member_cache_flags: MemberCacheFlags = cache_flags
         self._activities: List[ActivityPayload] = activities
         self._status: Optional[str] = status
@@ -897,10 +998,9 @@ class ConnectionState:
             if attr.startswith('parse_'):
                 parsers[attr[6:].upper()] = func
 
-        self.clear()
+        self.clear(full=True)
 
-    def clear(self) -> None:
-        self.subscriptions: GuildSubscriptions = GuildSubscriptions(self)
+    def clear(self, *, full: bool = False) -> None:
         self.user: Optional[ClientUser] = None
         self._users: weakref.WeakValueDictionary[int, User] = weakref.WeakValueDictionary()
         self.settings: Optional[UserSettings] = None
@@ -950,9 +1050,10 @@ class ConnectionState:
         self.experiments: Dict[int, UserExperiment] = {}
         self.guild_experiments: Dict[int, GuildExperiment] = {}
 
-    def process_chunk_requests(
-        self, guild_id: int, nonce: Optional[str], members: List[Member], complete: bool
-    ) -> None:
+        if full:
+            self.subscriptions: GuildSubscriptions = GuildSubscriptions(self)
+
+    def process_chunk_requests(self, guild_id: int, nonce: Optional[str], members: List[Member], complete: bool) -> None:
         removed = []
         for key, request in self._chunk_requests.items():
             if request.guild_id == guild_id and request.nonce == nonce:
@@ -1231,10 +1332,12 @@ class ConnectionState:
             except NotFound:
                 pass
 
-    def request_guild(
+    def subscribe_guild(
         self, guild: Guild, typing: bool = True, activities: bool = True, threads: bool = True, member_updates: bool = True
     ) -> Coroutine:
-        return self.subscriptions.subscribe_to(guild, typing=typing, activities=activities, threads=threads, member_updates=member_updates)
+        return self.subscriptions.subscribe_to(
+            guild, typing=typing, activities=activities, threads=threads, member_updates=member_updates
+        )
 
     def chunker(
         self,
@@ -1269,9 +1372,7 @@ class ConnectionState:
             )
             return await asyncio.wait_for(request.wait(), timeout=30.0)
         except asyncio.TimeoutError:
-            _log.warning(
-                'Timed out waiting for chunks with query %r and limit %d for guild ID %d.', query, limit, guild_id
-            )
+            _log.warning('Timed out waiting for chunks with query %r and limit %d for guild ID %d.', query, limit, guild_id)
             raise
 
     async def search_recent_members(
@@ -1290,9 +1391,7 @@ class ConnectionState:
         continuation_token = None
         while True:
             try:
-                await self.ws.search_recent_members(
-                    guild_id, query=query, nonce=request.nonce, after=continuation_token
-                )
+                await self.ws.search_recent_members(guild_id, query=query, nonce=request.nonce, after=continuation_token)
                 returned = await asyncio.wait_for(request.wait(), timeout=30.0)
             except asyncio.TimeoutError:
                 _log.warning(
@@ -1326,9 +1425,12 @@ class ConnectionState:
             states = []
             to_chunk = []
 
+            if not manager.empty:
+                await manager._requeue_subscriptions()
+
             for guild in self._guilds.values():
-                if self._request_guilds:
-                    await self.request_guild(guild)
+                if self._subscribe_guilds:
+                    await self.subscribe_guild(guild)
 
                 if self._guild_needs_chunking(guild):
                     if await self._can_chunk_guild(guild):
@@ -1398,9 +1500,7 @@ class ConnectionState:
 
         # Experiments
         self.experiments = {exp[0]: UserExperiment(state=self, data=exp) for exp in data.get('experiments', [])}
-        self.guild_experiments = {
-            exp[0]: GuildExperiment(state=self, data=exp) for exp in data.get('guild_experiments', [])
-        }
+        self.guild_experiments = {exp[0]: GuildExperiment(state=self, data=exp) for exp in data.get('guild_experiments', [])}
 
         # Extras
         self.analytics_token = data.get('analytics_token')
@@ -1413,9 +1513,7 @@ class ConnectionState:
         self.auth_session_id = data.get('auth_session_id_hash')
         self.connections = {c['id']: Connection(state=self, data=c) for c in data.get('connected_accounts', [])}
         self.pending_payments = {int(p['id']): Payment(state=self, data=p) for p in data.get('pending_payments', [])}
-        self.required_action = (
-            try_enum(RequiredActionType, data['required_action']) if 'required_action' in data else None
-        )
+        self.required_action = try_enum(RequiredActionType, data['required_action']) if 'required_action' in data else None
         self.friend_suggestion_count = data.get('friend_suggestion_count', 0)
 
         if 'sessions' in data:
@@ -1708,13 +1806,8 @@ class ConnectionState:
         for presence in data:
             self.parse_presence_update(presence)
 
-    def parse_presence_update(self, data: gw.PresenceUpdateEvent) -> None:
-        guild_id = utils._get_as_snowflake(data, 'guild_id')
-        guild = self._get_guild(guild_id)
-        if guild_id and not guild:
-            _log.debug('PRESENCE_UPDATE referencing an unknown guild ID: %s. Discarding.', guild_id)
-            return
-
+    def _parse_presence_update(self, guild: Optional[Guild], data: gw.BasePresenceUpdate):
+        guild_id = guild.id if guild else None
         user = data['user']
         user_id = int(user['id'])
 
@@ -1752,6 +1845,15 @@ class ConnectionState:
 
         if user_update:
             self.dispatch('user_update', user_update[0], user_update[1])
+
+    def parse_presence_update(self, data: gw.PresenceUpdateEvent) -> None:
+        guild_id = utils._get_as_snowflake(data, 'guild_id')
+        guild = self._get_guild(guild_id)
+        if guild_id and not guild:
+            _log.debug('PRESENCE_UPDATE referencing an unknown guild ID: %s. Discarding.', guild_id)
+            return
+
+        self._parse_presence_update(guild, data)
 
     def parse_user_update(self, data: gw.UserUpdateEvent) -> None:
         # Clear the ACK token
@@ -1914,9 +2016,7 @@ class ConnectionState:
                 old = copy.copy(existing)
                 existing._update(session)
                 if not from_ready and (
-                    old.status != existing.status
-                    or old.active != existing.active
-                    or old.activities != existing.activities
+                    old.status != existing.status or old.active != existing.active or old.activities != existing.activities
                 ):
                     self.dispatch('session_update', old, existing)
             else:
@@ -2112,9 +2212,7 @@ class ConnectionState:
     def parse_channel_recipient_remove(self, data: gw.ChannelRecipientEvent) -> None:
         channel = self._get_private_channel(int(data['channel_id']))
         if channel is None:
-            _log.debug(
-                'CHANNEL_RECIPIENT_REMOVE referencing an unknown channel ID: %s. Discarding.', data['channel_id']
-            )
+            _log.debug('CHANNEL_RECIPIENT_REMOVE referencing an unknown channel ID: %s. Discarding.', data['channel_id'])
             return
 
         user = self.store_user(data['user'])
@@ -2286,6 +2384,23 @@ class ConnectionState:
             else:
                 self.dispatch('thread_remove', thread)
 
+    def parse_thread_member_list_update(self, data: gw.ThreadMemberListUpdateEvent) -> None:
+        guild_id = int(data['guild_id'])
+        guild: Optional[Guild] = self._get_guild(guild_id)
+        if guild is None:
+            _log.debug('THREAD_MEMBER_LIST_UPDATE referencing an unknown guild ID: %s. Discarding.', guild_id)
+            return
+
+        thread_id = int(data['thread_id'])
+        thread: Optional[Thread] = guild.get_thread(thread_id)
+        if thread is None:
+            _log.debug('THREAD_MEMBER_LIST_UPDATE referencing an unknown thread ID: %s. Discarding.', thread_id)
+            return
+
+        members = [ThreadMember(thread, member) for member in data['members']]
+        for m in members:
+            thread._add_member(m)
+
     def parse_guild_member_add(self, data: gw.GuildMemberAddEvent) -> None:
         guild = self._get_guild(int(data['guild_id']))
         if guild is None:
@@ -2347,14 +2462,9 @@ class ConnectionState:
 
         self.dispatch('raw_member_remove', raw)
 
-    def parse_guild_member_update(self, data: gw.GuildMemberUpdateEvent) -> None:
-        guild = self._get_guild(int(data['guild_id']))
+    def _handle_member_update(self, guild: Guild, data: Union[gw.GuildMemberUpdateEvent, gw.MemberWithUser]):
         user = data['user']
         user_id = int(user['id'])
-        if guild is None:
-            _log.debug('GUILD_MEMBER_UPDATE referencing an unknown guild ID: %s. Discarding.', data['guild_id'])
-            return
-
         member = guild.get_member(user_id)
         if member is not None:
             old_member = member._update(data)
@@ -2371,6 +2481,14 @@ class ConnectionState:
             user_update = member._user._update_self(user)
             if user_update:
                 self.dispatch('user_update', user_update[0], user_update[1])
+
+    def parse_guild_member_update(self, data: gw.GuildMemberUpdateEvent) -> None:
+        guild = self._get_guild(int(data['guild_id']))
+        if guild is None:
+            _log.debug('GUILD_MEMBER_UPDATE referencing an unknown guild ID: %s. Discarding.', data['guild_id'])
+            return
+
+        self._handle_member_update(guild, data)
 
     def parse_guild_member_list_update(self, data: gw.GuildMemberListUpdateEvent) -> None:
         # The below code used to hackily emit guild member events from the member list
@@ -2541,7 +2659,9 @@ class ConnectionState:
             #         to_remove.append(item)
 
         if request:
-            if request.chunk and not (any(group['id'] == 'offline' for group in data['groups']) or data['member_count'] == data['online_count']):
+            if request.chunk and not (
+                any(group['id'] == 'offline' for group in data['groups']) or data['member_count'] == data['online_count']
+            ):
                 # The guild has offline members hidden
                 print(f'Detected guild {guild} with erroneous offline members')
                 return
@@ -2603,9 +2723,7 @@ class ConnectionState:
     def parse_guild_audit_log_entry_create(self, data: gw.GuildAuditLogEntryCreate) -> None:
         guild = self._get_guild(int(data['guild_id']))
         if guild is None:
-            _log.debug(
-                'GUILD_AUDIT_LOG_ENTRY_CREATE referencing an unknown guild ID: %s. Discarding.', data['guild_id']
-            )
+            _log.debug('GUILD_AUDIT_LOG_ENTRY_CREATE referencing an unknown guild ID: %s. Discarding.', data['guild_id'])
             return
 
         entry = AuditLogEntry(
@@ -2647,9 +2765,7 @@ class ConnectionState:
     def parse_auto_moderation_action_execution(self, data: AutoModerationActionExecution) -> None:
         guild = self._get_guild(int(data['guild_id']))
         if guild is None:
-            _log.debug(
-                'AUTO_MODERATION_ACTION_EXECUTION referencing an unknown guild ID: %s. Discarding.', data['guild_id']
-            )
+            _log.debug('AUTO_MODERATION_ACTION_EXECUTION referencing an unknown guild ID: %s. Discarding.', data['guild_id'])
             return
 
         execution = AutoModAction(data=data, state=self)
@@ -2706,24 +2822,28 @@ class ConnectionState:
         self,
         guild: Guild,
         *,
-        wait: bool = True,
+        wait: Literal[True] = ...,
         cache: bool,
         force_scraping: bool = ...,
+        chunk: bool = ...,
         channels: List[abcSnowflake] = ...,
         delay: Union[int, float] = ...,
-    ) -> List[Member]: ...
+    ) -> List[Member]:
+        ...
 
     @overload
     async def scrape_guild(
         self,
         guild: Guild,
         *,
-        wait: bool = False,
+        wait: Literal[False] = ...,
         cache: bool,
         force_scraping: bool = ...,
+        chunk: bool = ...,
         channels: List[abcSnowflake] = ...,
         delay: Union[int, float] = ...,
-    ) -> asyncio.Future[List[Member]]: ...
+    ) -> asyncio.Future[List[Member]]:
+        ...
 
     async def scrape_guild(
         self,
@@ -2732,6 +2852,7 @@ class ConnectionState:
         wait: bool = True,
         cache: bool,
         force_scraping: bool = False,
+        chunk: bool = False,
         channels: List[abcSnowflake] = MISSING,
         delay: Union[int, float] = MISSING,
     ) -> Union[List[Member], asyncio.Future[List[Member]]]:
@@ -2739,7 +2860,8 @@ class ConnectionState:
             await guild.query_members(user_ids=[self.self_id], cache=True)  # type: ignore # self_id is always present here
 
         if (
-            not force_scraping
+            not chunk
+            and not force_scraping
             and guild.me
             and any(
                 {
@@ -2751,57 +2873,31 @@ class ConnectionState:
         ):
             request = self._chunk_requests.get(guild.id)
             if request is None:
-                self._chunk_requests[guild.id] = request = ChunkRequest(
-                    guild.id, self.loop, self._get_guild, cache=cache
-                )
+                self._chunk_requests[guild.id] = request = ChunkRequest(guild.id, self.loop, self._get_guild, cache=cache)
                 await self.chunker([guild.id], nonce=request.nonce)
         else:
-            await self.assert_guild_presence_count(guild)
+            if not chunk:
+                await self.assert_guild_presence_count(guild)
 
             request = self._scrape_requests.get(guild.id)
             if request is None:
                 self._scrape_requests[guild.id] = request = MemberSidebar(
-                    guild, channels, chunk=False, cache=cache, loop=self.loop, delay=delay
+                    guild, channels, chunk=chunk, cache=cache, loop=self.loop, delay=delay or 0
                 )
+                if not request.channels:
+                    if chunk:
+                        raise ClientException('Guild cannot be chunked: no channels viewable by @everyone')
+                    raise ClientException('Failed to automatically choose channels; please specify them manually')
                 request.start()
 
         if wait:
             return await request.wait()
         return request.get_future()
 
-    # @overload
-    # async def chunk_guild(
-    #     self, guild: Guild, *, wait: Literal[True] = ..., cache: Optional[bool] = ...
-    # ) -> List[Member]: ...
-
-    # @overload
-    # async def chunk_guild(
-    #     self, guild: Guild, *, wait: Literal[False] = ..., channels: List[abcSnowflake] = ...
-    # ) -> asyncio.Future[List[Member]]: ...
-
-    # async def chunk_guild(
-    #     self,
-    #     guild: Guild,
-    #     *,
-    #     wait: bool = True,
-    #     channels: List[abcSnowflake] = MISSING,
-    # ) -> Union[asyncio.Future[List[Member]], List[Member]]:
-    #     if not guild.me:
-    #         await guild.query_members(user_ids=[self.self_id], cache=True)  # type: ignore # self_id is always present here
-
-    #     request = self._scrape_requests.get(guild.id)
-    #     if request is None:
-    #         self._scrape_requests[guild.id] = request = MemberSidebar(
-    #             guild, channels, chunk=True, cache=True, loop=self.loop, delay=0
-    #         )
-    #         request.start()
-
-    #     if wait:
-    #         return await request.wait()
-    #     return request.get_future()
-
     @overload
-    async def chunk_guild(self, guild: Guild, *, nonce: Optional[str] = ..., wait: Literal[True] = ..., cache: Optional[bool] = ...) -> List[Member]:
+    async def chunk_guild(
+        self, guild: Guild, *, nonce: Optional[str] = ..., wait: Literal[True] = ..., cache: Optional[bool] = ...
+    ) -> List[Member]:
         ...
 
     @overload
@@ -2834,12 +2930,10 @@ class ConnectionState:
             if await self._can_chunk_guild(guild):
                 coro = self.chunk_guild(guild)
             elif not guild._offline_members_hidden:
-                self._scrape_requests[guild.id] = request = MemberSidebar(
-                    guild, MISSING, chunk=True, cache=True, loop=self.loop, delay=0
-                )
-                if request.channels:
-                    request.start()
-                    coro = request.get_future()
+                try:
+                    coro = await self.scrape_guild(guild, wait=False, cache=True, chunk=True)
+                except ClientException:
+                    pass
 
             if coro is not None:
                 try:
@@ -2862,8 +2956,8 @@ class ConnectionState:
         if guild is None:
             return
 
-        if self._request_guilds and not guild.unavailable:
-            asyncio.ensure_future(self.request_guild(guild), loop=self.loop)
+        if self._subscribe_guilds and not guild.unavailable:
+            asyncio.ensure_future(self.subscribe_guild(guild), loop=self.loop)
 
         # Chunk if needed
         needs_chunking = self._guild_needs_chunking(guild)
@@ -3499,12 +3593,12 @@ class ConnectionState:
         return presence
 
     @overload
-    def get_read_state(self, id: int, type: ReadStateType = ..., *, if_exists: Literal[False] = ...) -> ReadState: ...
+    def get_read_state(self, id: int, type: ReadStateType = ..., *, if_exists: Literal[False] = ...) -> ReadState:
+        ...
 
     @overload
-    def get_read_state(
-        self, id: int, type: ReadStateType = ..., *, if_exists: Literal[True]
-    ) -> Optional[ReadState]: ...
+    def get_read_state(self, id: int, type: ReadStateType = ..., *, if_exists: Literal[True]) -> Optional[ReadState]:
+        ...
 
     def get_read_state(
         self, id: int, type: ReadStateType = ReadStateType.channel, *, if_exists: bool = False

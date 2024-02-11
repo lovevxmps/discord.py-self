@@ -893,6 +893,9 @@ class SnowflakeList(_SnowflakeListBase):
             return array.array.__new__(cls, 'Q', data if is_sorted else sorted(data))  # type: ignore
         return array.array.__new__(cls, 'Q')  # type: ignore
 
+    def __contains__(self, element: int) -> bool:
+        return self.has(element)
+
     def add(self, element: int) -> None:
         i = bisect_left(self, element)
         self.insert(i, element)

@@ -705,9 +705,7 @@ class Guild(Hashable):
 
         counts = guild.get('application_command_counts')
         if counts:
-            self.application_command_counts = ApplicationCommandCounts(
-                counts.get(1, 0), counts.get(2, 0), counts.get(3, 0)
-            )
+            self.application_command_counts = ApplicationCommandCounts(counts.get(1, 0), counts.get(2, 0), counts.get(3, 0))
 
         for vs in guild.get('voice_states', []):
             self._update_voice_state(vs, int(vs['channel_id']))
@@ -715,11 +713,7 @@ class Guild(Hashable):
         cache_flags = state.member_cache_flags
         for mdata in guild.get('members', []):
             member = Member(data=mdata, guild=self, state=state)
-            if (
-                cache_flags.joined
-                or member.id == state.self_id
-                or (cache_flags.voice and member.id in self._voice_states)
-            ):
+            if cache_flags.joined or member.id == state.self_id or (cache_flags.voice and member.id in self._voice_states):
                 self._add_member(member)
 
         for presence in guild.get('presences', []):
@@ -1342,7 +1336,7 @@ class Guild(Hashable):
     def chunked(self) -> bool:
         """:class:`bool`: Returns a boolean indicating if the guild is "chunked".
 
-        A chunked guild means that :attr:`member_count` is equal to the
+        A chunked guild means that the guild member count is equal to the
         number of members stored in the internal :attr:`members` cache.
 
         If this value returns ``False``, then you should request for
@@ -1351,7 +1345,9 @@ class Guild(Hashable):
         count = self._member_count
         if count is None:
             return False
-        return count == len(self._members)
+
+        # Member updates must be enabled to have an accurate member count
+        return count == len(self._members) and self._state.subscriptions.has_feature(self, 'member_updates')
 
     @property
     def created_at(self) -> datetime:
@@ -1415,7 +1411,8 @@ class Guild(Hashable):
         overwrites: Mapping[Union[Role, Member], PermissionOverwrite] = ...,
         category: Optional[Snowflake] = ...,
         **options: Any,
-    ) -> Coroutine[Any, Any, TextChannelPayload]: ...
+    ) -> Coroutine[Any, Any, TextChannelPayload]:
+        ...
 
     @overload
     def _create_channel(
@@ -1425,7 +1422,8 @@ class Guild(Hashable):
         overwrites: Mapping[Union[Role, Member], PermissionOverwrite] = ...,
         category: Optional[Snowflake] = ...,
         **options: Any,
-    ) -> Coroutine[Any, Any, VoiceChannelPayload]: ...
+    ) -> Coroutine[Any, Any, VoiceChannelPayload]:
+        ...
 
     @overload
     def _create_channel(
@@ -1435,7 +1433,8 @@ class Guild(Hashable):
         overwrites: Mapping[Union[Role, Member], PermissionOverwrite] = ...,
         category: Optional[Snowflake] = ...,
         **options: Any,
-    ) -> Coroutine[Any, Any, StageChannelPayload]: ...
+    ) -> Coroutine[Any, Any, StageChannelPayload]:
+        ...
 
     @overload
     def _create_channel(
@@ -1445,7 +1444,8 @@ class Guild(Hashable):
         overwrites: Mapping[Union[Role, Member], PermissionOverwrite] = ...,
         category: Optional[Snowflake] = ...,
         **options: Any,
-    ) -> Coroutine[Any, Any, CategoryChannelPayload]: ...
+    ) -> Coroutine[Any, Any, CategoryChannelPayload]:
+        ...
 
     @overload
     def _create_channel(
@@ -1455,7 +1455,8 @@ class Guild(Hashable):
         overwrites: Mapping[Union[Role, Member], PermissionOverwrite] = ...,
         category: Optional[Snowflake] = ...,
         **options: Any,
-    ) -> Coroutine[Any, Any, NewsChannelPayload]: ...
+    ) -> Coroutine[Any, Any, NewsChannelPayload]:
+        ...
 
     @overload
     def _create_channel(
@@ -1465,7 +1466,8 @@ class Guild(Hashable):
         overwrites: Mapping[Union[Role, Member], PermissionOverwrite] = ...,
         category: Optional[Snowflake] = ...,
         **options: Any,
-    ) -> Coroutine[Any, Any, Union[TextChannelPayload, NewsChannelPayload]]: ...
+    ) -> Coroutine[Any, Any, Union[TextChannelPayload, NewsChannelPayload]]:
+        ...
 
     @overload
     def _create_channel(
@@ -1475,7 +1477,8 @@ class Guild(Hashable):
         overwrites: Mapping[Union[Role, Member], PermissionOverwrite] = ...,
         category: Optional[Snowflake] = ...,
         **options: Any,
-    ) -> Coroutine[Any, Any, ForumChannelPayload]: ...
+    ) -> Coroutine[Any, Any, ForumChannelPayload]:
+        ...
 
     @overload
     def _create_channel(
@@ -1485,7 +1488,8 @@ class Guild(Hashable):
         overwrites: Mapping[Union[Role, Member], PermissionOverwrite] = ...,
         category: Optional[Snowflake] = ...,
         **options: Any,
-    ) -> Coroutine[Any, Any, DirectoryChannelPayload]: ...
+    ) -> Coroutine[Any, Any, DirectoryChannelPayload]:
+        ...
 
     @overload
     def _create_channel(
@@ -1495,7 +1499,8 @@ class Guild(Hashable):
         overwrites: Mapping[Union[Role, Member], PermissionOverwrite] = ...,
         category: Optional[Snowflake] = ...,
         **options: Any,
-    ) -> Coroutine[Any, Any, GuildChannelPayload]: ...
+    ) -> Coroutine[Any, Any, GuildChannelPayload]:
+        ...
 
     def _create_channel(
         self,
@@ -2111,9 +2116,7 @@ class Guild(Hashable):
             if isinstance(default_reaction_emoji, _EmojiTag):
                 options['default_reaction_emoji'] = default_reaction_emoji._to_partial()._to_forum_tag_payload()
             elif isinstance(default_reaction_emoji, str):
-                options['default_reaction_emoji'] = PartialEmoji.from_str(
-                    default_reaction_emoji
-                )._to_forum_tag_payload()
+                options['default_reaction_emoji'] = PartialEmoji.from_str(default_reaction_emoji)._to_forum_tag_payload()
             else:
                 raise ValueError(f'default_reaction_emoji parameter must be either Emoji, PartialEmoji, or str')
 
@@ -3486,8 +3489,7 @@ class Guild(Hashable):
         """
         data = await self._state.http.get_subscribed_scheduled_events(self.id)
         return [
-            self.get_scheduled_event(int(d['guild_scheduled_event_id']))
-            or Object(id=int(d['guild_scheduled_event_id']))
+            self.get_scheduled_event(int(d['guild_scheduled_event_id'])) or Object(id=int(d['guild_scheduled_event_id']))
             for d in data
         ]
 
@@ -3561,7 +3563,8 @@ class Guild(Hashable):
         image: bytes = ...,
         directory_broadcast: bool = ...,
         reason: Optional[str] = ...,
-    ) -> ScheduledEvent: ...
+    ) -> ScheduledEvent:
+        ...
 
     @overload
     async def create_scheduled_event(
@@ -3577,7 +3580,8 @@ class Guild(Hashable):
         image: bytes = ...,
         directory_broadcast: bool = ...,
         reason: Optional[str] = ...,
-    ) -> ScheduledEvent: ...
+    ) -> ScheduledEvent:
+        ...
 
     @overload
     async def create_scheduled_event(
@@ -3592,7 +3596,8 @@ class Guild(Hashable):
         image: bytes = ...,
         directory_broadcast: bool = ...,
         reason: Optional[str] = ...,
-    ) -> ScheduledEvent: ...
+    ) -> ScheduledEvent:
+        ...
 
     @overload
     async def create_scheduled_event(
@@ -3607,7 +3612,8 @@ class Guild(Hashable):
         image: bytes = ...,
         directory_broadcast: bool = ...,
         reason: Optional[str] = ...,
-    ) -> ScheduledEvent: ...
+    ) -> ScheduledEvent:
+        ...
 
     async def create_scheduled_event(
         self,
@@ -3967,7 +3973,8 @@ class Guild(Hashable):
         mentionable: bool = ...,
         icon: Optional[bytes] = ...,
         emoji: Optional[PartialEmoji] = ...,
-    ) -> Role: ...
+    ) -> Role:
+        ...
 
     @overload
     async def create_role(
@@ -3980,7 +3987,8 @@ class Guild(Hashable):
         hoist: bool = ...,
         display_icon: Union[bytes, str] = MISSING,
         mentionable: bool = ...,
-    ) -> Role: ...
+    ) -> Role:
+        ...
 
     async def create_role(
         self,
@@ -4105,9 +4113,7 @@ class Guild(Hashable):
         # TODO: add to cache
         return role
 
-    async def edit_role_positions(
-        self, positions: Mapping[Snowflake, int], *, reason: Optional[str] = None
-    ) -> List[Role]:
+    async def edit_role_positions(self, positions: Mapping[Snowflake, int], *, reason: Optional[str] = None) -> List[Role]:
         """|coro|
 
         Bulk edits a list of :class:`Role` in the guild.
@@ -4506,9 +4512,7 @@ class Guild(Hashable):
             )
             automod_rule_map = {rule.id: rule for rule in automod_rules}
 
-            webhooks = (
-                Webhook.from_state(data=raw_webhook, state=self._state) for raw_webhook in data.get('webhooks', [])
-            )
+            webhooks = (Webhook.from_state(data=raw_webhook, state=self._state) for raw_webhook in data.get('webhooks', []))
             webhook_map = {webhook.id: webhook for webhook in webhooks}
 
             count = 0
@@ -4868,23 +4872,26 @@ class Guild(Hashable):
         """|coro|
 
         Requests all members that belong to this guild.
+
         This is a websocket operation and can be slow.
 
         .. versionadded:: 2.0
 
         .. note::
-            This can only be used on guilds with less than 1000 members.
+            For guilds with more than 1,000 members, this requires the
+            :attr:`~Permissions.manage_roles`, :attr:`~Permissions.kick_members`,
+            or :attr:`~Permissions.ban_members` permissions.
 
         Parameters
         -----------
-        channel: :class:`~abc.Snowflake`
-            The channel to request members from.
+        cache: :class:`bool`
+            Whether to cache the members as well.
 
         Raises
         -------
         ClientException
+            This guild is not subscribed to.
             This guild cannot be chunked or chunking failed.
-            Guild is no longer available.
         InvalidData
             Did not receive a response from the Gateway.
 
@@ -4895,12 +4902,14 @@ class Guild(Hashable):
         """
         state = self._state
         if state.is_guild_evicted(self):
-            raise ClientException('This guild is no longer available')
+            return []
+        if not state.subscriptions.is_subscribed(self):
+            raise ClientException('This guild is not subscribed to')
 
         if await state._can_chunk_guild(self):
             members = await state.chunk_guild(self, cache=cache)
         elif not self._offline_members_hidden:
-            ...
+            members = await state.scrape_guild(self, cache=cache, chunk=True)
         else:
             raise ClientException('This guild cannot be chunked')
 
@@ -4910,9 +4919,9 @@ class Guild(Hashable):
         self,
         channels: List[Snowflake] = MISSING,
         *,
-        cache: bool = True,
+        cache: bool = False,
         force_scraping: bool = False,
-        delay: Union[int, float] = 1,
+        delay: float = 0,
     ) -> List[Member]:
         """|coro|
 
@@ -4924,10 +4933,9 @@ class Guild(Hashable):
         .. versionadded:: 2.0
 
         .. note::
-            If you are the owner, have either of :attr:`~Permissions.administrator`,
-            :attr:`~Permissions.kick_members`, :attr:`~Permissions.ban_members`, or :attr:`~Permissions.manage_roles`,
-            permissions will be fetched through OPcode 8 (this includes offline members).
-            Else, they will be scraped from the member sidebar.
+            If you have any of :attr:`~Permissions.kick_members`, :attr:`~Permissions.ban_members`,
+            or :attr:`~Permissions.manage_roles`, members will be requested normally (including offline members).
+            Else, this will scrape the member sidebar, which is slower and may not include offline members.
 
         Parameters
         -----------
@@ -4938,7 +4946,7 @@ class Guild(Hashable):
             Whether to cache the members as well. The cache will not be kept updated.
         force_scraping: :class:`bool`
             Whether to scrape the member sidebar regardless of permissions.
-        delay: Union[:class:`int`, :class:`float`]
+        delay: :class:`float`
             The time in seconds to wait between requests.
             This only applies when scraping from the member sidebar.
 
@@ -4946,7 +4954,6 @@ class Guild(Hashable):
         -------
         ClientException
             Fetching members failed.
-            Guild is no longer available.
         InvalidData
             Did not receive a response from the gateway.
 
@@ -4955,12 +4962,11 @@ class Guild(Hashable):
         List[:class:`Member`]
             The members that belong to this guild (offline members may not be included).
         """
-        if self._state.is_guild_evicted(self):
-            raise ClientException('This guild is no longer available')
+        state = self._state
+        if state.is_guild_evicted(self):
+            return []
 
-        members = await self._state.scrape_guild(
-            self, cache=cache, force_scraping=force_scraping, delay=delay, channels=channels
-        )
+        members = await state.scrape_guild(self, cache=cache, force_scraping=force_scraping, delay=delay, channels=channels)
         return members
 
     async def query_members(
@@ -5008,8 +5014,10 @@ class Guild(Hashable):
 
             .. versionadded:: 1.4
         subscribe: :class:`bool`
-            Whether to subscribe to the resulting members. This will keep their info and presence updated.
+            Whether to subscribe to the resulting members. This will keep their member info and presence updated.
             This requires another request, and defaults to ``False``.
+
+            See also :meth:`subscribe_to`.
 
             .. versionadded:: 2.0
 
@@ -5036,8 +5044,7 @@ class Guild(Hashable):
             self, query=query, limit=limit, user_ids=user_ids, presences=presences, cache=cache  # type: ignore # The two types are compatible
         )
         if subscribe:
-            ids: List[_Snowflake] = [str(m.id) for m in members]
-            await self._state.ws.request_lazy_guild(self.id, members=ids)
+            await self._state.subscriptions.subscribe_to_members(self, *members)
         return members
 
     async def query_recent_members(
@@ -5046,7 +5053,6 @@ class Guild(Hashable):
         *,
         limit: int = 1000,
         cache: bool = True,
-        subscribe: bool = False,
     ) -> List[Member]:
         """|coro|
 
@@ -5069,10 +5075,7 @@ class Guild(Hashable):
         cache: :class:`bool`
             Whether to cache the members internally. This makes operations
             such as :meth:`get_member` work for those that matched.
-            The cache will not be kept updated unless ``subscribe`` is set to ``True``.
-        subscribe: :class:`bool`
-            Whether to subscribe to the resulting members. This will keep their info and presence updated.
-            This requires another request, and defaults to ``False``.
+            The cache will not be kept updated.
 
         Raises
         -------
@@ -5087,13 +5090,7 @@ class Guild(Hashable):
             The list of members that have matched the query.
         """
         limit = min(10000, limit or 1)
-        members = await self._state.search_recent_members(self, query or '', limit, cache)
-        if subscribe:
-            ids: List[_Snowflake] = [str(m.id) for m in members]
-            for i in range(0, len(ids), 750):
-                subs = ids[i : i + 750]
-                await self._state.ws.request_lazy_guild(self.id, members=subs)
-        return members
+        return await self._state.search_recent_members(self, query or '', limit, cache)
 
     async def change_voice_state(
         self,
@@ -5125,6 +5122,7 @@ class Guild(Hashable):
             The preferred region to connect to.
 
             .. versionchanged:: 2.0
+
                 The type of this parameter has changed to :class:`str`.
         """
         state = self._state
@@ -5138,20 +5136,97 @@ class Guild(Hashable):
 
         await ws.voice_state(self.id, channel_id, self_mute, self_deaf, self_video, preferred_region=region)
 
-    async def request(self, **kwargs):  # Purposefully left undocumented...
+    async def subscribe(
+        self, *, typing: bool = MISSING, activities: bool = MISSING, threads: bool = MISSING, member_updates: bool = MISSING
+    ) -> None:
         """|coro|
 
-        Request a guild.
-        This is required to receive most events for large guilds.
+        Subscribes to a guild.
 
-        .. versionadded:: 2.0
+        This is required to receive most events and have a populated thread cache for large guilds.
 
         .. note::
+
             This is done automatically by default, so you do not need
-            to perform this operation unless you passed ``request_guilds=False``
-            to your :class:`Client`.
+            to perform this operation unless you passed ``guild_subscriptions=False``
+            to your :class:`Client`. This is not recommended for most use cases.
+
+        .. versionadded:: 2.1
+
+        Attributes
+        -----------
+        typing: :class:`bool`
+            Whether to receive typing events.
+
+            .. note::
+
+                This is required to subscribe to large guilds (over 75,000 members).
+        activities: :class:`bool`
+            Currently unknown.
+        threads: :class:`bool`
+            Whether to populate the thread cache and receive thread events.
+        member_updates: :class:`bool`
+            Whether to receive member update events.
         """
-        await self._state.request_guild(self, **kwargs)
+        state = self._state
+        await self._state.subscribe_guild(
+            self, typing=typing, activities=activities, threads=threads, member_updates=member_updates
+        )
+
+    async def subscribe_to(
+        self, *, members: Collection[Snowflake] = MISSING, threads: Collection[Snowflake] = MISSING
+    ) -> None:
+        """|coro|
+
+        Subscribes to specific members and thread member lists in the guild.
+
+        Subscribing to members ensures their member and presence information is kept up to date,
+        ensuring :func:`on_member_update`, :func:`on_user_update`, and :func:`on_presence_update` events are dispatched.
+
+        .. versionadded:: 2.1
+
+        Parameters
+        -----------
+        members: List[:class:`~abc.Snowflake`]
+            A collection of members to subscribe to.
+        threads: List[:class:`~abc.Snowflake`]
+            A collection of threads to subscribe to.
+            If these threads are cached, they will have their :attr:`~Thread.members` cache populated.
+
+        Raises
+        -------
+        ValueError
+            The guild is not subscribed to.
+
+        """
+        subscriptions = self._state.subscriptions
+        if members:
+            await subscriptions.subscribe_to_members(self, *members)
+        if threads:
+            await subscriptions.subscribe_to_threads(self, *threads)
+
+    async def unsubscribe_from(
+        self, *, members: Collection[Snowflake] = MISSING, threads: Collection[Snowflake] = MISSING
+    ) -> None:
+        """|coro|
+
+        Unsubscribes from specific members and thread member lists in the guild.
+        Any unknown members or threads are ignored.
+
+        .. versionadded:: 2.1
+
+        Parameters
+        -----------
+        members: List[:class:`~abc.Snowflake`]
+            A collection of members to unsubscribe from.
+        threads: List[:class:`~abc.Snowflake`]
+            A collection of threads to unsubscribe from.
+        """
+        subscriptions = self._state.subscriptions
+        if members:
+            await subscriptions.unsubscribe_from_members(self, *members)
+        if threads:
+            await subscriptions.unsubscribe_from_threads(self, *threads)
 
     async def automod_rules(self) -> List[AutoModRule]:
         """|coro|
