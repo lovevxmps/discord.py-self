@@ -639,7 +639,7 @@ class GuildSubscriptions:
         # If it is, we need to flush the old payload and start a new one
         # If there isn't an old payload and the new payload is larger, this is impossible
         EMPTY: Any = {}
-        new_payload = self._pending.copy()
+        new_payload: gw.BulkGuildSubscribePayload = self._pending.copy()
         for guild_id, subscriptions in changes.items():
             old = new_payload.get(guild_id, EMPTY)
             new_payload[guild_id] = {**old, **subscriptions}
@@ -3443,7 +3443,6 @@ class ConnectionState:
 
     # Silence "unknown event" warnings for events parsed elsewhere
     parse_nothing = lambda *_: None
-    parse_thread_member_list_update = parse_nothing  # Grabbed directly in Thread.fetch_members
     # parse_guild_application_commands_update = parse_nothing  # Grabbed directly in command iterators
 
     def _get_reaction_user(self, channel: MessageableChannel, user_id: int) -> Optional[Union[User, Member]]:

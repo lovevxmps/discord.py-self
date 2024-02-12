@@ -49,7 +49,7 @@ from .scheduled_event import GuildScheduledEvent
 from .snowflake import Snowflake
 from .sticker import GuildSticker
 from .subscriptions import PremiumGuildSubscriptionSlot
-from .threads import Thread, ThreadMember, ThreadMemberData
+from .threads import BaseThreadMember, Thread, ThreadMember
 from .user import (
     Connection,
     FriendSuggestion,
@@ -318,7 +318,7 @@ class ThreadMembersUpdate(TypedDict):
 class ThreadMemberListUpdateEvent(TypedDict):
     guild_id: Snowflake
     thread_id: Snowflake
-    members: List[ThreadMemberData]
+    members: List[BaseThreadMember]
 
 
 class GuildMemberAddEvent(MemberWithUser):

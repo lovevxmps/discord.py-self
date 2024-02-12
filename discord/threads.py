@@ -47,7 +47,6 @@ if TYPE_CHECKING:
     from typing_extensions import Self
 
     from .types.gateway import ThreadMemberListUpdateEvent
-    from .types.member import MemberWithUser
     from .types.threads import (
         BaseThreadMember as BaseThreadMemberPayload,
         Thread as ThreadPayload,

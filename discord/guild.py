@@ -135,7 +135,7 @@ if TYPE_CHECKING:
     from .types.embed import EmbedType
     from .types.integration import IntegrationType
     from .types.message import MessageSearchAuthorType, MessageSearchHasType
-    from .types.snowflake import SnowflakeList, Snowflake as _Snowflake
+    from .types.snowflake import SnowflakeList
     from .types.widget import EditWidgetSettings
     from .types.audit_log import AuditLogEvent
     from .types.oauth2 import OAuth2Guild as OAuth2GuildPayload
@@ -5153,7 +5153,7 @@ class Guild(Hashable):
 
         .. versionadded:: 2.1
 
-        Attributes
+        Parameters
         -----------
         typing: :class:`bool`
             Whether to receive typing events.
@@ -5168,7 +5168,6 @@ class Guild(Hashable):
         member_updates: :class:`bool`
             Whether to receive member update events.
         """
-        state = self._state
         await self._state.subscribe_guild(
             self, typing=typing, activities=activities, threads=threads, member_updates=member_updates
         )
