@@ -186,7 +186,7 @@ class Client:
 
         .. versionadded:: 2.1
 
-        .. warn::
+        .. warning::
 
             If this is set to ``False``, the following consequences will occur:
 
