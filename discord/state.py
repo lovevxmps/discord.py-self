@@ -639,10 +639,10 @@ class GuildSubscriptions:
         # If it is, we need to flush the old payload and start a new one
         # If there isn't an old payload and the new payload is larger, this is impossible
         EMPTY: Any = {}
-        new_payload: gw.BulkGuildSubscribePayload = self._pending.copy()
+        new_payload = self._pending.copy()
         for guild_id, subscriptions in changes.items():
             old = new_payload.get(guild_id, EMPTY)
-            new_payload[guild_id] = {**old, **subscriptions}
+            new_payload[guild_id] = {**old, **subscriptions}  # type: ignore # ???
 
         if len(utils._to_json(new_payload)) > self.MAX_PAYLOAD_SIZE:
             if len(utils._to_json(changes)) > self.MAX_PAYLOAD_SIZE:
