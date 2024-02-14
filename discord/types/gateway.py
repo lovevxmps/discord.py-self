@@ -614,24 +614,6 @@ class CallDeleteEvent(TypedDict):
     unavailable: NotRequired[bool]
 
 
-"""
-{
-        op: 14,
-        d: {
-          guild_id: 'id',
-          typing: true,
-          threads: true,
-          activities: true,
-          thread_member_lists: [],
-          members: [],
-          channels: {
-              channel_id: [range[]],
-              ...
-           },
-        },
-}"""
-
-
 class BaseGuildSubscribePayload(TypedDict, total=False):
     typing: bool
     threads: bool

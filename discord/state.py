@@ -1806,7 +1806,7 @@ class ConnectionState:
         for presence in data:
             self.parse_presence_update(presence)
 
-    def _parse_presence_update(self, guild: Optional[Guild], data: gw.BasePresenceUpdate):
+    def _handle_presence_update(self, guild: Optional[Guild], data: gw.BasePresenceUpdate):
         guild_id = guild.id if guild else None
         user = data['user']
         user_id = int(user['id'])
@@ -1853,7 +1853,7 @@ class ConnectionState:
             _log.debug('PRESENCE_UPDATE referencing an unknown guild ID: %s. Discarding.', guild_id)
             return
 
-        self._parse_presence_update(guild, data)
+        self._handle_presence_update(guild, data)
 
     def parse_user_update(self, data: gw.UserUpdateEvent) -> None:
         # Clear the ACK token
@@ -2734,6 +2734,8 @@ class ConnectionState:
             guild=guild,
         )
         self.dispatch('audit_log_entry_create', entry)
+
+    # AutoMod events are not actually dispatched for user accounts...
 
     def parse_auto_moderation_rule_create(self, data: AutoModerationRule) -> None:
         guild = self._get_guild(int(data['guild_id']))
