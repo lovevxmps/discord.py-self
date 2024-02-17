@@ -1249,6 +1249,7 @@ class ConnectionState:
         return utils.SequenceProxy(self._private_channels.values())
 
     async def call_connect(self, channel_id: int) -> None:
+        # This is now no longer needed with the AUTO_CALL_CONNECT capability
         if self.ws is None:
             return
 

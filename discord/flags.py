@@ -301,7 +301,20 @@ class Capabilities(BaseFlags):
     @classmethod
     def default(cls: Type[Self]) -> Self:
         """Returns a :class:`Capabilities` with the current value used by the library."""
-        return cls._from_value(8189)
+        return cls(
+            lazy_user_notes=True,
+            versioned_read_states=True,
+            versioned_user_guild_settings=True,
+            dedupe_user_objects=True,
+            prioritized_ready_payload=True,
+            multiple_guild_experiment_populations=True,
+            non_channel_read_states=True,
+            auth_token_refresh=True,
+            user_settings_proto=True,
+            client_state_v2=True,
+            passive_guild_update=True,
+            auto_call_connect=True,
+        )
 
     @flag_value
     def lazy_user_notes(self):
@@ -365,15 +378,14 @@ class Capabilities(BaseFlags):
         return 1 << 11
 
     @flag_value
-    def unknown_12(self):
-        """:class:`bool`: Unknown."""
-        # Might be pomelo or family center related
+    def auto_call_connect(self):
+        """:class:`bool`: Connect user to all existing calls on connect (deprecates ``CALL_CONNECT`` opcode)."""
         return 1 << 12
 
     @flag_value
-    def message_reaction_debouncing(self):
-        """:class:`bool`: Unknown."""
-        # Almost definitely message reaction debouncing (MESSAGE_REACTION_ADD_MANY)
+    def debounce_message_reactions(self):
+        """:class:`bool`: Debounce message reactions (dispatches ``MESSAGE_REACTION_ADD_MANY`` instead of ``MESSAGE_REACTION_ADD`` when a lot of reactions are sent in quick succession)."""
+        # Debounced reactions don't have member information, so this is kinda undesirable :(
         return 1 << 13
 
 
